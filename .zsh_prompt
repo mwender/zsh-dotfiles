@@ -1,0 +1,112 @@
+# ---- Solarized-ish Zsh prompt with Git status markers ----
+
+# Attempt to prefer 256-color terms (similar intent to your bash version)
+if [[ $COLORTERM == gnome-* && $TERM == xterm ]] && infocmp gnome-256color >/dev/null 2>&1; then
+  export TERM='gnome-256color'
+elif infocmp xterm-256color >/dev/null 2>&1; then
+  export TERM='xterm-256color'
+fi
+
+# Let PROMPT expand $(...) and variables
+setopt PROMPT_SUBST
+
+# Colors (use zsh built-ins; no tput needed)
+autoload -U colors && colors
+
+# Map to names close to your bash variables.
+# Note: Zsh color names are limited; these approximate your solarized palette.
+bold='%B'
+reset='%b%f%k'
+
+black='%F{black}'
+white='%F{white}'
+red='%F{red}'
+green='%F{green}'
+yellow='%F{yellow}'
+blue='%F{blue}'
+cyan='%F{cyan}'
+purple='%F{magenta}'
+violet='%F{magenta}'
+orange='%F{yellow}'  # closest built-in; adjust if you want a true orange via %F{208}
+
+# Git segment (branch + state markers)
+prompt_git() {
+  local s=""
+  local branchName=""
+
+  # Inside work tree?
+  if git rev-parse --is-inside-work-tree >/dev/null 2>&1; then
+
+    # Avoid running checks inside .git
+    if [[ "$(git rev-parse --is-inside-git-dir 2>/dev/null)" == "false" ]]; then
+      git update-index --really-refresh -q >/dev/null 2>&1
+
+      # staged changes
+      if ! git diff --quiet --ignore-submodules --cached; then
+        s+='+'
+      fi
+
+      # unstaged changes
+      if ! git diff-files --quiet --ignore-submodules --; then
+        s+='!'
+      fi
+
+      # untracked files
+      if [[ -n "$(git ls-files --others --exclude-standard 2>/dev/null)" ]]; then
+        s+='?'
+      fi
+
+      # stash exists
+      if git rev-parse --verify refs/stash >/dev/null 2>&1; then
+        s+='$'
+      fi
+    fi
+
+    branchName="$(git symbolic-ref --quiet --short HEAD 2>/dev/null \
+      || git rev-parse --short HEAD 2>/dev/null \
+      || echo '(unknown)')"
+
+    [[ -n "$s" ]] && s=" [$s]"
+
+    # $1 is the leading style passed in from the prompt
+    print -r -- "${1}${branchName}${blue}${s}"
+  fi
+}
+
+# Style choices based on root / ssh
+if [[ "$USER" == "root" ]]; then
+  userStyle="${red}"
+else
+  userStyle="${orange}"
+fi
+
+if [[ -n "$SSH_TTY" ]]; then
+  hostStyle="${bold}${red}"
+else
+  hostStyle="${yellow}"
+fi
+
+# Terminal title: set to current working directory (like your \w title)
+# This works in most terminals (including iTerm2 + Terminal.app).
+precmd() {
+  print -Pn "\e]0;%~\a"
+}
+
+# Prompt:
+#   (title set by precmd)
+#   newline
+#   user at host in cwd [git]
+#   newline
+#   $ prompt char
+PROMPT=""
+PROMPT+="${bold}
+"
+PROMPT+="${userStyle}%n${white} at ${hostStyle}%m${white} in ${green}%~"
+PROMPT+='$(prompt_git "'"${white} on ${violet}"'")'
+PROMPT+="
+"
+PROMPT+="${white}$ ${reset}"
+
+# Continuation prompt (your PS2 arrow)
+PS2="${yellow}→ ${reset}"
+

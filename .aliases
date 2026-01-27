@@ -1,0 +1,20 @@
+# --- Navigation ---
+alias ..='cd ..'
+alias ...='cd ../..'
+alias ....='cd ../../..'
+alias .....='cd ../../../..'
+alias -- -='cd -'
+alias cpwd='pwd | pbcopy'
+
+# --- ls (macOS / BSD sane defaults) ---
+# -G = enable color
+# -F = classify
+alias ls='command ls -G'
+alias l='ls -lF'
+alias ll='ls -lahF'
+alias llc='ls -lahFC'
+alias la='ls -laF'
+
+# Directories only
+alias lsd="ls -lF | grep '^d'"
+
