@@ -18,3 +18,7 @@ alias la='ls -laF'
 # Directories only
 alias lsd="ls -lF | grep '^d'"
 
+alias wh="cd ~/Dropbox/WenderHost"
+alias wm="cd ~/Dropbox/Wenmark"
+alias web="cd ~/webdev/laravel-valet"
+alias sourcetree='open -a SourceTree'
