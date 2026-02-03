@@ -52,33 +52,43 @@ copy_item() {
   local dst="$2"
 
   if $DRY_RUN; then
-    echo "copy: ${src} -> ${dst}"
+    echo "📋 copy (dry-run): ${src} -> ${dst}"
     return 0
   fi
 
   if [[ -e "$dst" ]]; then
+    echo "🧹 remove: ${dst}"
     rm -rf -- "$dst"
   fi
 
   if command -v rsync >/dev/null 2>&1; then
+    echo "📋 copy: ${src} -> ${dst}"
     rsync -a -- "$src" "$dst"
   else
     # Fallback for systems without rsync.
+    echo "📋 copy: ${src} -> ${dst}"
     cp -R -p -- "$src" "$dst"
   fi
 }
 
+EXCLUDES=(
+  ".git"
+  "install.sh"
+)
+
 items=()
 while IFS= read -r -d '' item; do
   base="$(basename -- "$item")"
-  case "$base" in
-    .|..|.git|install.sh)
-      continue
-      ;;
-    *)
-      items+=("$item")
-      ;;
-  esac
+  if [[ "$base" == "." || "$base" == ".." ]]; then
+    continue
+  fi
+  for exclude in "${EXCLUDES[@]}"; do
+    if [[ "$base" == "$exclude" ]]; then
+      echo "⏭  skip: ${base}"
+      continue 2
+    fi
+  done
+  items+=("$item")
 done < <(find "$REPO_DIR" -maxdepth 1 -mindepth 1 -print0)
 
 if [[ ${#items[@]} -eq 0 ]]; then
@@ -91,9 +101,10 @@ if $BACKUP; then
     target="${HOME_DIR}/$(basename -- "$item")"
     if [[ -e "$target" ]]; then
       if $DRY_RUN; then
-        echo "backup: ${target} -> ${backup_dir}/"
+        echo "🧳 backup (dry-run): ${target} -> ${backup_dir}/"
       else
         mkdir -p -- "$backup_dir"
+        echo "🧳 backup: ${target} -> ${backup_dir}/"
         mv -- "$target" "$backup_dir/"
       fi
     fi
@@ -108,10 +119,10 @@ done
 
 if $BACKUP; then
   if $DRY_RUN; then
-    echo "backup dir: ${backup_dir}"
+    echo "🧳 backup dir (dry-run): ${backup_dir}"
   else
-    echo "Backups stored in: ${backup_dir}"
+    echo "🧳 backups stored in: ${backup_dir}"
   fi
 fi
 
-echo "Install complete."
+echo "✅ install complete."
