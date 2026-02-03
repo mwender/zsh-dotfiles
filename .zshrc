@@ -2,6 +2,7 @@
 [[ -o interactive ]] || return
 
 # Enable completion system
+fpath=(~/.zsh/completions $fpath)
 autoload -Uz compinit
 compinit -C
 
@@ -18,7 +19,6 @@ zsh_files=(
   ~/.aliases
   ~/.functions
   ~/.zsh/completions/wp-completion.bash
-  ~/.zsh/completions/_sshconn
 )
 
 # Source existing files
