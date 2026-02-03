@@ -16,6 +16,9 @@ Copies all dotfiles from this repo into $HOME.
 Options:
   --no-backup   Overwrite existing files without backing them up
   --dry-run     Show what would happen without making changes
+
+Example:
+  ./install.sh --dry-run
 USAGE
 }
 
