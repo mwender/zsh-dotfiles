@@ -63,11 +63,20 @@ copy_item() {
 
   if command -v rsync >/dev/null 2>&1; then
     echo "📋 copy: ${src} -> ${dst}"
-    rsync -a -- "$src" "$dst"
+    if [[ -d "$src" ]]; then
+      rsync -a -- "$src"/ "$dst"/
+    else
+      rsync -a -- "$src" "$dst"
+    fi
   else
     # Fallback for systems without rsync.
     echo "📋 copy: ${src} -> ${dst}"
-    cp -R -p -- "$src" "$dst"
+    if [[ -d "$src" ]]; then
+      mkdir -p -- "$dst"
+      cp -R -p -- "$src"/ "$dst"/
+    else
+      cp -R -p -- "$src" "$dst"
+    fi
   fi
 }
 
