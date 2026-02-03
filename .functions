@@ -3,3 +3,23 @@ mkd() {
   mkdir -p -- "$1" && cd -- "$1"
 }
 
+# Run TinyPNG on an image
+shrinkpng(){
+  pngquant --quality 70-90 --speed 1 -v --ext .png --force $1
+}
+
+# Pretty print your directories
+# Install `tree` first - brew install tree
+function t(){
+  # Defaults to 3 levels deep, do more with `t 5` or `t 1`
+  # pass additional args after
+  tree -I '.git|node_modules|bower_components|.DS_Store' --dirsfirst --filelimit 15 -L ${1:-3} -aC $2
+}
+
+# Rename files in current dir (spaces to underscores, remove chars like `{}(),\!`, and all lowercase)
+function renamefiles(){
+  ls | while read -r FILE
+  do
+      mv -v "$FILE" `echo $FILE | tr ' ' '_' | tr -d '[{}(),\!]' | tr -d "\'" | tr '[A-Z]' '[a-z]' | sed 's/_-_/_/g'`
+  done
+}
