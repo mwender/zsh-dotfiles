@@ -18,6 +18,7 @@ zsh_files=(
   ~/.aliases
   ~/.functions
   ~/.zsh/completions/wp-completion.bash
+  ~/.zsh/completions/_sshconn
 )
 
 # Source existing files

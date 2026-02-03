@@ -1,0 +1,29 @@
+#compdef sshconn
+# Zsh completion for sshconn
+#
+# Install:
+#   cp _sshconn ~/.zsh/completions/
+#   ensure compinit is enabled
+
+local connections_file="$HOME/.connections"
+local -a domains
+
+if [[ -r "$connections_file" ]]; then
+  domains=(${(f)"$(awk -F',' '{print $1}' "$connections_file" 2>/dev/null)"})
+else
+  domains=()
+fi
+
+_arguments -s \
+  '--list[List all connections with numbered options]' \
+  '--by-server[Group connections by IP address and prompt for selection]' \
+  '--add[Add a new connection entry (domain, user, IP, port)]' \
+  '--scp[Use SCP to copy files (domain required)]' \
+  '(-h --help)'{-h,--help}'[Show help]' \
+  '1:domain:->domain' && return 0
+
+case $state in
+  domain)
+    _describe -t domains 'domain' domains
+  ;;
+esac
