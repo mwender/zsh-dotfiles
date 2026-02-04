@@ -10,6 +10,7 @@ Personal Zsh dotfiles for a clean, fast CLI experience. This repo includes a cus
 ├── .functions                # Helper functions (mkd, shrinkpng, t, renamefiles)
 ├── .gitconfig                # Git aliases + user identity
 ├── .vimrc                    # Vim defaults (Solarized, UX, backups, etc.)
+├── .zprofile                 # Login shell config (ARM Homebrew init)
 ├── .zsh/                     # Zsh extras
 │   └── completions/          # Zsh + bash-style completions
 │       ├── _sshconn          # Zsh completion for sshconn
@@ -20,6 +21,8 @@ Personal Zsh dotfiles for a clean, fast CLI experience. This repo includes a cus
 ```
 
 ## Install
+
+⚠️ On macOS, `.zprofile` is used for login shell setup (e.g. Homebrew). `.zshrc` is for interactive config.
 
 ```
 ./install.sh
@@ -32,6 +35,9 @@ Dry run:
 ```
 
 ## Changelog
+
+### 0.1.1 (2026-02-04)
+- Added ARM-only Homebrew via `.zprofile`
 
 ### 0.1.0 (2026-02-03)
 - Added `install.sh` to copy dotfiles into `$HOME`
