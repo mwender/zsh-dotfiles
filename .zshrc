@@ -26,4 +26,10 @@ for file in $zsh_files; do
   [[ -f $file ]] && source $file
 done
 
+# Keep COLUMNS in sync for tools like icdiff
+autoload -Uz add-zsh-hook
+add-zsh-hook precmd () {
+  export COLUMNS=$(tput cols)
+}
+
 export PATH="$HOME/.local/bin:$PATH"
