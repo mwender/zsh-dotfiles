@@ -23,3 +23,52 @@ function renamefiles(){
       mv -v "$FILE" `echo $FILE | tr ' ' '_' | tr -d '[{}(),\!]' | tr -d "\'" | tr '[A-Z]' '[a-z]' | sed 's/_-_/_/g'`
   done
 }
+
+# OpenClaw dashboard tunnel + open in browser
+openclawdash() {
+  # ---- config ----
+  local remote_host="macmini@wenmark-macmini.local"
+  local local_port="18789"
+  local remote_bind="127.0.0.1"
+  local remote_port="18789"
+
+  # Where your dashboard lives once tunneled locally.
+  # Tip: you can append /#token=... if you want to paste a token manually.
+  local url="http://localhost:${local_port}/"
+
+  # ---- derived ----
+  local ctl_sock="/tmp/openclaw-dash-${local_port}.sock"
+
+  # If a control master is already up, reuse it.
+  if ssh -S "${ctl_sock}" -O check "${remote_host}" >/dev/null 2>&1; then
+    print "🦞 OpenClaw tunnel already running on localhost:${local_port}"
+  else
+    print "🦞 Starting OpenClaw tunnel..."
+    ssh \
+      -M -S "${ctl_sock}" \
+      -f -N \
+      -L "${local_port}:${remote_bind}:${remote_port}" \
+      -o ExitOnForwardFailure=yes \
+      -o ServerAliveInterval=30 \
+      -o ServerAliveCountMax=3 \
+      "${remote_host}" || return 1
+    print "✅ Tunnel up: http://localhost:${local_port}/"
+  fi
+
+  # Open in your default browser (macOS).
+  command -v open >/dev/null 2>&1 && open "${url}" >/dev/null 2>&1
+}
+
+# Optional: stop the tunnel cleanly
+openclawdash_stop() {
+  local remote_host="macmini@wenmark-macmini.local"
+  local local_port="18789"
+  local ctl_sock="/tmp/openclaw-dash-${local_port}.sock"
+
+  if ssh -S "${ctl_sock}" -O check "${remote_host}" >/dev/null 2>&1; then
+    ssh -S "${ctl_sock}" -O exit "${remote_host}" >/dev/null 2>&1
+    print "🛑 OpenClaw tunnel stopped."
+  else
+    print "ℹ️ No OpenClaw tunnel found."
+  fi
+}
