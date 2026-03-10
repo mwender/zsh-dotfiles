@@ -22,3 +22,4 @@ alias wh="cd ~/Dropbox/WenderHost"
 alias wm="cd ~/Dropbox/Wenmark"
 alias web="cd ~/webdev/laravel-valet"
 alias sourcetree='open -a SourceTree'
+alias bennettshare="cd ~/wenmark-on-bennett"
