@@ -53,7 +53,7 @@ If repo contents or behavior conflict with the request, stop and surface the con
   WP-CLI bash completion loaded via `bashcompinit`.
 
 - `install.sh`
-  Installer that copies all top-level repo items into `$HOME`, excluding `.git` and `install.sh`. Existing targets are optionally moved into a timestamped backup directory first.
+  Installer that copies top-level repo items into `$HOME`, excluding `.git`, `AGENTS.md`, and `install.sh`. Existing targets are optionally moved into a timestamped backup directory first.
 
 - `.gitconfig`, `.vimrc`
   Personal editor and Git configuration also managed by this repo.

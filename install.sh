@@ -85,6 +85,7 @@ copy_item() {
 
 EXCLUDES=(
   ".git"
+  "AGENTS.md"
   "install.sh"
 )
 
