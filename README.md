@@ -36,6 +36,11 @@ Dry run:
 
 ## Changelog
 
+### 0.1.2 (2026-05-11)
+- Adding `cpath` alias for extracting the full path to a given file (e.g. `$ cpath {$filename}`).
+- Adding `AGENTS.md`.
+- Fine-tuning case-insensitve path completion.
+
 ### 0.1.1 (2026-02-04)
 - Added ARM-only Homebrew via `.zprofile`
 
