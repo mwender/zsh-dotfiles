@@ -5,7 +5,6 @@ alias ....='cd ../../..'
 alias .....='cd ../../../..'
 alias -- -='cd -'
 alias cpwd='pwd | pbcopy'
-alias cpath='realpath "$1" | pbcopy'
 
 # --- ls (macOS / BSD sane defaults) ---
 # -G = enable color

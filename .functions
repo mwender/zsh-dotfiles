@@ -3,6 +3,14 @@ mkd() {
   mkdir -p -- "$1" && cd -- "$1"
 }
 
+# Copy a file or directory's absolute path to the clipboard
+cpath() {
+  [[ $# -gt 0 ]] || return 1
+  realpath "$1" | pbcopy
+}
+
+compdef _files cpath
+
 # Run TinyPNG on an image
 shrinkpng(){
   pngquant --quality 70-90 --speed 1 -v --ext .png --force $1

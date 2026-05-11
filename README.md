@@ -36,6 +36,9 @@ Dry run:
 
 ## Changelog
 
+### 0.1.3 (2026-05-11)
+- Prompting `cpath` alias to a function to allow for tab-completion.
+
 ### 0.1.2 (2026-05-11)
 - Adding `cpath` alias for extracting the full path to a given file (e.g. `$ cpath {$filename}`).
 - Adding `AGENTS.md`.
