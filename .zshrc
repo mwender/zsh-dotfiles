@@ -10,8 +10,10 @@ compinit -C
 autoload -Uz bashcompinit
 bashcompinit
 
-# Case-insensitive completion
-zstyle ':completion:*' matcher-list 'm:{a-z}={A-Z}'
+# Prefer exact matches first, then fall back to case-insensitive matching.
+# Note: bashcompinit-backed completions (like WP-CLI's bash completion) may
+# not honor zstyle matchers the same way native Zsh completions do.
+zstyle ':completion:*' matcher-list '' 'm:{a-zA-Z}={A-Za-z}'
 
 # Files to source
 zsh_files=(
