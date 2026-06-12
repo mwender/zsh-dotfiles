@@ -25,3 +25,6 @@ alias web="cd ~/webdev/laravel-valet"
 alias bedrock="cd ~/webdev/laravel-valet/bedrock"
 alias sourcetree='open -a SourceTree'
 alias bennettshare="cd ~/wenmark-on-bennett"
+
+# Misc
+alias combine='"$HOME/Dropbox/Projects/harvest-to-whmcs/bin/combine"'
