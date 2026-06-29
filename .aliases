@@ -27,4 +27,5 @@ alias sourcetree='open -a SourceTree'
 alias bennettshare="cd ~/wenmark-on-bennett"
 
 # Misc
-alias combine='"$HOME/Dropbox/Projects/harvest-to-whmcs/bin/combine"'
+#alias combine='"$HOME/Dropbox/Projects/harvest-to-whmcs/bin/combine"'
+alias combine='bun run /Users/mwender/Dropbox/Projects/harvest-to-whmcs/src/index.tsx'
