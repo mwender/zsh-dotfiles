@@ -13,3 +13,9 @@
 
 	name = Michael Wender
 	email = michael@michaelwender.com
+[credential "https://github.com"]
+	helper =
+[credential "https://github"]
+	com = !gh auth git-credential
+[credential]
+	helper = !gh auth git-credential
