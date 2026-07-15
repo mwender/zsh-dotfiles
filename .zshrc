@@ -36,6 +36,9 @@ add-zsh-hook precmd () {
 
 export PATH="$HOME/.local/bin:$PATH"
 
+# Personal scripts (sshconn, etc.)
+export PATH="$HOME/bin:$PATH"
+
 # bun completions
 [ -s "$HOME/.bun/_bun" ] && source "$HOME/.bun/_bun"
 
