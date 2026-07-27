@@ -67,6 +67,32 @@ openclawdash() {
   command -v open >/dev/null 2>&1 && open "${url}" >/dev/null 2>&1
 }
 
+# Jump into ~/webdev/laravel-valet/bedrock, or a tab-completable site subdir within it
+BEDROCK_ROOT="$HOME/webdev/laravel-valet/bedrock"
+
+bedrock() {
+  if [[ $# -eq 0 ]]; then
+    cd -- "$BEDROCK_ROOT" || return 1
+    return
+  fi
+
+  local target="$BEDROCK_ROOT/$1"
+  if [[ -d "$target" ]]; then
+    cd -- "$target"
+  else
+    echo "bedrock: no such site '$1' in $BEDROCK_ROOT" >&2
+    return 1
+  fi
+}
+
+_bedrock() {
+  local -a sites
+  sites=("$BEDROCK_ROOT"/*(/N:t))
+  _describe 'bedrock site' sites
+}
+
+compdef _bedrock bedrock
+
 # Optional: stop the tunnel cleanly
 openclawdash_stop() {
   local remote_host="macmini@wenmark-macmini.local"
