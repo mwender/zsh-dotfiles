@@ -118,3 +118,13 @@ launchpad() {
   cd -- "$dir" || return
   claude --dangerously-skip-permissions
 }
+
+# Short alias for launchpad
+lpd() {
+  launchpad "$@"
+}
+
+# Start Claude code with the name of the current dir
+claude() {
+    command claude -n "$(basename "$PWD")" "$@"
+  }
