@@ -106,3 +106,15 @@ openclawdash_stop() {
     print "ℹ️ No OpenClaw tunnel found."
   fi
 }
+
+# Pick a project via the launchpad TUI, cd into it, and start Claude Code.
+# When Claude Code exits, you're left at a normal prompt in that directory
+# (a subprocess can't change its parent shell's directory after it exits,
+# so the cd has to happen here rather than in the launchpad binary itself).
+launchpad() {
+  local dir
+  dir="$(command launchpad)" || return
+  [[ -z "$dir" ]] && return
+  cd -- "$dir" || return
+  claude --dangerously-skip-permissions
+}
