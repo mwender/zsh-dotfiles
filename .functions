@@ -3,6 +3,36 @@ mkd() {
   mkdir -p -- "$1" && cd -- "$1"
 }
 
+# `wp db import <file>` normally shells out to `mysql --execute="...SOURCE <file>;"`,
+# but SOURCE (and every other backslash meta-command) is a mysql-client REPL feature
+# that only works in a real interactive TTY -- it silently breaks under Homebrew's
+# mysql-client the moment input isn't a live terminal. Rewriting the file argument
+# into a stdin redirect (`wp db import - < file`) sidesteps SOURCE entirely and
+# just works. This wrapper makes `wp db import <file>` do that rewrite transparently;
+# everything else falls through to the real `wp` untouched.
+wp() {
+  if [[ "$1" == "db" && "$2" == "import" ]]; then
+    local file="" args=()
+    shift 2
+    for arg in "$@"; do
+      if [[ -z "$file" && "$arg" != -* ]]; then
+        file="$arg"
+      else
+        args+=("$arg")
+      fi
+    done
+    if [[ -n "$file" && "$file" != "-" ]]; then
+      if [[ ! -f "$file" ]]; then
+        echo "wp: import file not found: $file" >&2
+        return 1
+      fi
+      command wp db import - "${args[@]}" < "$file"
+      return $?
+    fi
+  fi
+  command wp "$@"
+}
+
 # Copy a file or directory's absolute path to the clipboard
 cpath() {
   [[ $# -gt 0 ]] || return 1
