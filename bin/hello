@@ -1,0 +1,100 @@
+#!/usr/bin/env bash
+#
+# hello — the terminal splash. A reminder of the commands built for working
+# across the MacBook and the headless Mac Mini.
+#
+# Runs automatically for a new interactive shell that is not inside tmux (see
+# .zshrc). Inside tmux it would fire on every pane, which is noise. Run it by
+# hand any time with `hello`.
+#
+#   hello           print the splash
+#   hello --no-art  skip the banner, just the commands
+#
+# Set WENMARK_NO_SPLASH=1 to suppress the automatic one.
+#
+set -uo pipefail
+
+ART=1
+[ "${1:-}" = "--no-art" ] && ART=0
+
+# Colour only when we are actually writing to a terminal that can show it.
+if [ -t 1 ] && [ "${TERM:-dumb}" != "dumb" ]; then
+  C_DIM=$'\033[38;5;245m'; C_KEY=$'\033[38;5;37m'   # cyan
+  C_HDR=$'\033[38;5;33m'                             # blue
+  C_TXT=$'\033[0m';        C_WARN=$'\033[38;5;166m' # orange
+  C_OFF=$'\033[0m';        C_B=$'\033[1m'
+else
+  C_DIM=""; C_KEY=""; C_HDR=""; C_TXT=""; C_WARN=""; C_OFF=""; C_B=""
+fi
+
+ROOT="${PROJECTS_DIR:-$HOME/Projects}"
+HOST_SHORT="$(hostname -s 2>/dev/null || echo unknown)"
+IS_MINI=0
+[ "$HOST_SHORT" = "${PM_LOCAL_HOSTNAME:-wenmark-macmini}" ] && IS_MINI=1
+
+count_projects() {
+  [ -d "$ROOT" ] || { echo 0; return; }
+  find "$ROOT" -mindepth 1 -maxdepth 1 -type d -exec test -d '{}/.git' ';' -print 2>/dev/null | wc -l | tr -d ' '
+}
+
+rule() { # rule <label>
+  local label="$1" pad
+  pad=$(printf '%*s' $(( 54 - ${#label} )) '')
+  printf '  %s%s%s %s%s%s\n' "$C_HDR" "$label" "$C_OFF" "$C_DIM" "${pad// /─}" "$C_OFF"
+}
+
+row() { # row <command> <description>
+  printf '    %s%-22s%s %s\n' "$C_KEY" "$1" "$C_OFF" "$2"
+}
+
+note() {
+  printf '    %s\n' "$1"
+}
+
+if [ "$ART" = 1 ]; then
+  printf '\n'
+  printf '   %s╭──────────────╮%s   %s%sWENMARK%s %s· PROJECTS%s\n' \
+    "$C_DIM" "$C_OFF" "$C_B" "$C_HDR" "$C_OFF" "$C_DIM" "$C_OFF"
+  printf '   %s│%s %s$ _%s          %s│%s   %s%s · %s projects%s\n' \
+    "$C_DIM" "$C_OFF" "$C_KEY" "$C_OFF" "$C_DIM" "$C_OFF" \
+    "$C_DIM" "$HOST_SHORT" "$(count_projects)" "$C_OFF"
+  printf '   %s╰──────────────╯%s\n' "$C_DIM" "$C_OFF"
+fi
+printf '\n'
+
+if [ "$IS_MINI" = 1 ]; then
+  rule "PROJECTS"
+  row "proj"                "fuzzy-pick a project and open its session"
+  row "proj <name> claude"  "… with Claude Code running"
+  row "proj <name> codex"   "… with Codex running"
+  row "proj -l"             "list projects, ${C_KEY}*${C_OFF} marks a live session"
+  row "proj -k <name>"      "kill a session (needs the exact name)"
+else
+  rule "PROJECTS — on the Mac Mini"
+  row "pm"                  "fuzzy-pick a project on the Mini and open it"
+  row "pm <name> claude"    "… with Claude Code running"
+  row "pm -l"               "list projects, ${C_KEY}*${C_OFF} marks a live session"
+  row "pm -s"               "plain shell on the Mini, no tmux"
+  printf '\n'
+  rule "PROJECTS — here"
+  row "lpd"                 "launchpad TUI — descriptions, last opened"
+  row "proj <name>"         "local tmux session (needs tmux + fzf)"
+fi
+
+printf '\n'
+rule "INSIDE A TMUX SESSION"
+row "C-b  d"      "detach — everything keeps running"
+row "C-b  n / p"  "next / previous window"
+row "C-b  w"      "pick a window from a list"
+row "C-b  ["      "scroll back through output (q quits)"
+
+printf '\n'
+rule "STAYING IN SYNC"
+note "${C_WARN}GitHub is the source of truth, not Dropbox.${C_OFF}"
+note "Commit and push before switching machines — nothing warns you."
+row "sync-secrets" "copy .env files to the Mini (they never mirror)"
+
+printf '\n'
+printf '    %shello%s to show this again · %shello --no-art%s for just the list\n' \
+  "$C_DIM" "$C_OFF" "$C_DIM" "$C_OFF"
+printf '\n'

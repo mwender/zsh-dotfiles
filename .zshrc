@@ -45,3 +45,10 @@ export PATH="$HOME/bin:$PATH"
 # bun
 export BUN_INSTALL="$HOME/.bun"
 export PATH="$BUN_INSTALL/bin:$PATH"
+
+# Terminal splash. Skipped inside tmux, where it would fire on every pane
+# rather than once per terminal. `hello` prints it on demand; set
+# WENMARK_NO_SPLASH=1 to turn the automatic one off.
+if [[ -z "$TMUX" && -z "$WENMARK_NO_SPLASH" ]] && command -v hello >/dev/null 2>&1; then
+  hello
+fi
