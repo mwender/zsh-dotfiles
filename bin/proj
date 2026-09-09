@@ -4,8 +4,10 @@
 #
 #   proj                    fuzzy-pick a project, then attach to its session
 #   proj <name>             attach to <name>'s session, creating it if needed
-#   proj <name> claude      ... and start Claude Code, continuing this
-#                           directory's last conversation if there is one
+#   proj <name> claude      ... and start Claude Code with Remote Control on,
+#                           named after the project so it is selectable in the
+#                           Claude app, continuing this directory's last
+#                           conversation if there is one
 #   proj <name> codex       ... and start Codex in it
 #   proj <name> claude new  force a fresh conversation instead of continuing
 #   proj -l                 list projects, marking the ones with a live session
@@ -19,12 +21,14 @@
 # Asking for an agent that is already running in the session attaches to it
 # rather than starting a second one: going back to the work is the common case.
 #
+# Set PROJ_NO_REMOTE_CONTROL=1 to start Claude without Remote Control.
+#
 set -uo pipefail
 
 # Answer --help before checking anything: asking how a command works should
 # not require its dependencies to be installed.
 case "${1:-}" in
-  -h|--help) sed -n '2,21p' "$0" | sed 's/^# \{0,1\}//'; exit 0 ;;
+  -h|--help) sed -n '2,25p' "$0" | sed 's/^# \{0,1\}//'; exit 0 ;;
 esac
 
 ROOT="${PROJECTS_DIR:-$HOME/Projects}"
@@ -123,13 +127,22 @@ case "$AGENT" in
   claude)
     AGENT_BIN=$(command -v claude) || {
       echo "'claude' is not installed or not on PATH." >&2; exit 1; }
+    # Remote Control, named after the project, so the session is reachable from
+    # the Claude app the moment it exists. Without it a session started this way
+    # never attaches to a terminal, never shows its pairing prompt, and stays
+    # invisible to the app -- which is the whole point of running it here.
+    # The name is what the app lists, so "google-services" beats a hostname.
+    RC_ARG=""
+    if [ -z "${PROJ_NO_REMOTE_CONTROL:-}" ]; then
+      printf -v RC_ARG ' --remote-control %q' "$NAME"
+    fi
     # Rejoin the directory's last conversation rather than starting over. A
     # project that lives on this machine is usually being returned to, not
     # begun, and a fresh session would silently lose the thread.
     if [ "$FRESH" != new ] && has_prior_conversation "$DIR"; then
-      AGENT_CMD="$AGENT_BIN --continue; $BACK_TO_SHELL"
+      AGENT_CMD="$AGENT_BIN$RC_ARG --continue; $BACK_TO_SHELL"
     else
-      AGENT_CMD="$AGENT_BIN; $BACK_TO_SHELL"
+      AGENT_CMD="$AGENT_BIN$RC_ARG; $BACK_TO_SHELL"
     fi
     ;;
   codex)
