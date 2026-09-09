@@ -89,6 +89,67 @@ EXCLUDES=(
   "install.sh"
 )
 
+# Directories whose CONTENTS are symlinked into $HOME/<name>/, one file at a
+# time, rather than the directory being copied or replaced wholesale.
+#
+# Two reasons. Editing a script in the repo takes effect immediately and a
+# `git pull` updates the installed command with no second step. And $HOME/bin
+# already holds things this repo does not manage (hey, sshconn, subl) -- those
+# must survive untouched, which replacing the directory would not allow.
+LINK_INTO=(
+  "bin"
+)
+
+is_link_into() {
+  local candidate="$1"
+  local d
+  for d in "${LINK_INTO[@]}"; do
+    [[ "$candidate" == "$d" ]] && return 0
+  done
+  return 1
+}
+
+link_contents() {
+  local src_dir="$1"
+  local dst_dir="$2"
+
+  if ! $DRY_RUN; then
+    mkdir -p -- "$dst_dir"
+  fi
+
+  local src base dst
+  for src in "$src_dir"/*; do
+    [[ -e "$src" ]] || continue
+    base="$(basename -- "$src")"
+    dst="${dst_dir}/${base}"
+
+    # Already pointing at the right place: nothing to do, and nothing to back up.
+    if [[ -L "$dst" && "$(readlink -- "$dst")" == "$src" ]]; then
+      echo "✅ already linked: ${dst}"
+      continue
+    fi
+
+    if [[ -e "$dst" || -L "$dst" ]]; then
+      if $DRY_RUN; then
+        echo "🧳 backup (dry-run): ${dst} -> ${backup_dir:-<no backup>}/"
+      elif $BACKUP; then
+        mkdir -p -- "$backup_dir"
+        echo "🧳 backup: ${dst} -> ${backup_dir}/"
+        mv -- "$dst" "$backup_dir/"
+      else
+        rm -rf -- "$dst"
+      fi
+    fi
+
+    if $DRY_RUN; then
+      echo "🔗 symlink (dry-run): ${dst} -> ${src}"
+    else
+      echo "🔗 symlink: ${dst} -> ${src}"
+      ln -s -- "$src" "$dst"
+    fi
+  done
+}
+
 items=()
 while IFS= read -r -d '' item; do
   base="$(basename -- "$item")"
@@ -111,7 +172,12 @@ fi
 
 if $BACKUP; then
   for item in "${items[@]}"; do
-    target="${HOME_DIR}/$(basename -- "$item")"
+    base="$(basename -- "$item")"
+    # Handled per-file by link_contents, which backs up only what it replaces.
+    if is_link_into "$base"; then
+      continue
+    fi
+    target="${HOME_DIR}/${base}"
     if [[ -e "$target" ]]; then
       if $DRY_RUN; then
         echo "🧳 backup (dry-run): ${target} -> ${backup_dir}/"
@@ -127,7 +193,11 @@ fi
 for item in "${items[@]}"; do
   base="$(basename -- "$item")"
   target="${HOME_DIR}/${base}"
-  copy_item "$item" "$target"
+  if is_link_into "$base"; then
+    link_contents "$item" "$target"
+  else
+    copy_item "$item" "$target"
+  fi
 done
 
 if $BACKUP; then

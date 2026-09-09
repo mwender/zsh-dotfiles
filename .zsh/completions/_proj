@@ -1,0 +1,43 @@
+#compdef proj
+# Zsh completion for proj
+#
+# Install:
+#   cp _proj ~/.zsh/completions/
+#   ensure compinit is enabled
+
+local root="${PROJECTS_DIR:-$HOME/Projects}"
+local -a projects
+
+# Same definition proj itself uses: top-level directories holding a .git
+if [[ -d "$root" ]]; then
+  projects=(${(f)"$(command find "$root" -mindepth 1 -maxdepth 1 -type d \
+    -exec test -d '{}/.git' ';' -print 2>/dev/null \
+    | command sed "s|^${root}/||" | command sort)"})
+else
+  projects=()
+fi
+
+_arguments -s \
+  '(-l --list)'{-l,--list}'[List projects, marking live sessions]' \
+  '(-k --kill)'{-k,--kill}'[Kill a project'\''s session]' \
+  '(-h --help)'{-h,--help}'[Show help]' \
+  '1:project:->project' \
+  '2:agent:->agent' && return 0
+
+case $state in
+  project)
+    _describe -t projects 'project' projects
+  ;;
+  agent)
+    # After -k the second word is still a project, not an agent.
+    if [[ ${words[2]} == (-k|--kill) ]]; then
+      _describe -t projects 'project' projects
+    else
+      local -a agents
+      agents=('claude:Start Claude Code in the session'
+              'codex:Start Codex in the session'
+              'shell:Plain shell, no agent')
+      _describe -t agents 'agent' agents
+    fi
+  ;;
+esac

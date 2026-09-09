@@ -1,0 +1,70 @@
+#compdef pm
+# Zsh completion for pm
+#
+# Completes project names that live on the Mac Mini. The list is fetched over
+# Tailscale and cached, because an SSH round-trip on every <TAB> is too slow to
+# tolerate. Refresh it by deleting the cache file, or wait for it to expire.
+#
+# Install:
+#   cp _pm ~/.zsh/completions/
+#   ensure compinit is enabled
+
+local cache="${PM_CACHE:-$HOME/.cache/pm-projects}"
+local host="${PM_HOST:-macmini@macs-mac-mini}"
+local -i ttl=${PM_CACHE_TTL:-86400}
+local -a projects
+
+_pm_refresh_cache() {
+  command mkdir -p "${cache:h}" 2>/dev/null
+  command ssh -o BatchMode=yes -o ConnectTimeout=5 "$host" \
+    "zsh -lc 'proj -l'" 2>/dev/null \
+    | command sed -e 's/\x1b\[[0-9;]*m//g' -e 's/^[[:space:]]*\*\{0,1\}[[:space:]]*//' \
+    | command grep -E '^[A-Za-z0-9._-]+$' > "$cache.tmp" 2>/dev/null
+  if [[ -s "$cache.tmp" ]]; then
+    command mv "$cache.tmp" "$cache"
+  else
+    command rm -f "$cache.tmp"
+  fi
+}
+
+# Refresh when the cache is missing or older than the TTL. Never block on a
+# machine that is asleep or off the tailnet -- a stale list beats a hung shell,
+# which is why the refresh carries BatchMode and a short ConnectTimeout.
+local -i ttl_min=$(( ttl / 60 ))
+(( ttl_min < 1 )) && ttl_min=1
+if [[ ! -f "$cache" ]] || [[ -n $(command find "$cache" -mmin "+${ttl_min}" 2>/dev/null) ]]; then
+  _pm_refresh_cache
+fi
+
+# Read with an explicit cat rather than zsh's $(<file): the latter is opened at
+# parse time, so `zsh -n` on this file tries to read an empty path and warns.
+if [[ -r "$cache" ]]; then
+  projects=(${(f)"$(command cat "$cache" 2>/dev/null)"})
+else
+  projects=()
+fi
+
+_arguments -s \
+  '(-l --list)'{-l,--list}'[List projects on the Mini, marking live sessions]' \
+  '(-k --kill)'{-k,--kill}'[Kill a project'\''s session on the Mini]' \
+  '(-s --shell)'{-s,--shell}'[Plain shell on the Mini, no tmux]' \
+  '(-h --help)'{-h,--help}'[Show help]' \
+  '1:project:->project' \
+  '2:agent:->agent' && return 0
+
+case $state in
+  project)
+    _describe -t projects 'project (on the Mini)' projects
+  ;;
+  agent)
+    if [[ ${words[2]} == (-k|--kill) ]]; then
+      _describe -t projects 'project (on the Mini)' projects
+    else
+      local -a agents
+      agents=('claude:Start Claude Code in the session'
+              'codex:Start Codex in the session'
+              'shell:Plain shell, no agent')
+      _describe -t agents 'agent' agents
+    fi
+  ;;
+esac

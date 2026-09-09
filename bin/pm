@@ -1,0 +1,53 @@
+#!/usr/bin/env bash
+#
+# pm — the projects on the Mac Mini, from wherever you are.
+#
+#   pm                      fuzzy-pick a project on the Mini and open it
+#   pm <name>               open that project's session
+#   pm <name> claude        ... with Claude Code running
+#   pm <name> codex         ... with Codex running
+#   pm -l                   list projects and their live sessions
+#   pm -k <name>            kill a session
+#   pm -s                   plain shell on the Mini, no tmux
+#
+# Every form is the matching `proj` command, run over Tailscale. Run this on
+# the Mini itself and it just becomes `proj`, so the same muscle memory works
+# from either seat.
+#
+# Override the target with PM_HOST=user@host.
+#
+set -uo pipefail
+
+HOST="${PM_HOST:-macmini@macs-mac-mini}"
+SELF="${PM_LOCAL_HOSTNAME:-wenmark-macmini}"
+
+# Already on the Mini? Then there is nothing to reach across.
+if [ "$(hostname -s 2>/dev/null)" = "$SELF" ]; then
+  command -v proj >/dev/null || { echo "pm: proj is not installed here" >&2; exit 1; }
+  exec proj "$@"
+fi
+
+case "${1:-}" in
+  -h|--help) sed -n '2,18p' "$0" | sed 's/^# \{0,1\}//'; exit 0 ;;
+esac
+
+# Keep the link alive across a lousy connection rather than dropping the
+# session the moment a hotel network stalls.
+SSH_OPTS=(-t
+  -o ServerAliveInterval=20
+  -o ServerAliveCountMax=6
+  -o ConnectTimeout=10)
+
+shquote() { printf "'%s'" "$(printf '%s' "$1" | sed "s/'/'\\\\''/g")"; }
+
+if [ "${1:-}" = "-s" ] || [ "${1:-}" = "--shell" ]; then
+  exec ssh "${SSH_OPTS[@]}" "$HOST"
+fi
+
+remote="proj"
+for a in "$@"; do remote="$remote $(shquote "$a")"; done
+
+# A login shell is required: `ssh host cmd` runs zsh non-login and
+# non-interactive, which sources only .zshenv — so Homebrew and ~/bin would
+# both be missing from PATH and proj would not be found.
+exec ssh "${SSH_OPTS[@]}" "$HOST" "zsh -lc $(shquote "$remote")"

@@ -32,7 +32,12 @@ If repo contents or behavior conflict with the request, stop and surface the con
 ## Repo Map
 
 - `.zprofile`
-  Login-shell setup. Right now it only initializes Apple Silicon Homebrew from `/opt/homebrew/bin/brew` when available.
+  Login-shell setup. Initializes Apple Silicon Homebrew from `/opt/homebrew/bin/brew`, puts `$HOME/bin` and `$HOME/.local/bin` on `PATH` (both guarded against double-prepending), and sets `PROJECTS_DIR` to the first of `~/Dropbox/Projects` or `~/Projects` that exists. That last one is how the same file works on two machines that keep projects in different places — order matters, and the MacBook has only the Dropbox path.
+
+- `bin/`
+  Executables. **Symlinked** into `~/bin` per file by `install.sh`, not copied — see the installer note below.
+  - `bin/proj` — one tmux session per project, named after the directory, optionally starting Claude Code or Codex in it. Reads `PROJECTS_DIR`. Requires `tmux`; the bare `proj` picker also requires `fzf`.
+  - `bin/pm` — the same commands run against the headless Mac Mini over Tailscale, so they work from any network. On the Mini itself it `exec`s `proj`, detected by comparing `hostname -s` against `PM_LOCAL_HOSTNAME` (default `wenmark-macmini`). Target host is `PM_HOST` (default `macmini@macs-mac-mini`).
 
 - `.zshrc`
   Interactive-shell entrypoint. It returns immediately for non-interactive shells, configures completion, enables `bashcompinit`, and sources the main dotfiles.
@@ -49,11 +54,19 @@ If repo contents or behavior conflict with the request, stop and surface the con
 - `.zsh/completions/_sshconn`
   Zsh completion definition that reads connection names from `$HOME/.connections`.
 
+- `.zsh/completions/_proj`
+  Completes local project names, using the same definition `proj` does: top-level directories under `PROJECTS_DIR` that contain a `.git`.
+
+- `.zsh/completions/_pm`
+  Completes project names that live on the Mac Mini. Fetches them over SSH and caches to `~/.cache/pm-projects` (TTL via `PM_CACHE_TTL`), because a round-trip on every `<TAB>` is unusable. Never blocks on an unreachable machine — a stale list beats a hung shell.
+
 - `.zsh/completions/wp-completion.bash`
   WP-CLI bash completion loaded via `bashcompinit`.
 
 - `install.sh`
   Installer that copies top-level repo items into `$HOME`, excluding `.git`, `AGENTS.md`, and `install.sh`. Existing targets are optionally moved into a timestamped backup directory first.
+
+  **Exception: `LINK_INTO`.** Directories named there (currently just `bin`) have their *contents* symlinked into `$HOME/<name>/` one file at a time, rather than the directory being replaced. Two reasons, both load-bearing. Editing a script in the repo takes effect immediately, and `git pull` updates the installed command with no second step. And `~/bin` already contains things this repo does not manage — `hey`, `sshconn`, `httpcompression`, and symlinks to `bash` and `subl` — which replacing the directory wholesale would move into the backup folder and break. The per-file path also skips the wholesale backup loop and backs up only the individual files it actually replaces, and leaves a correct existing symlink alone.
 
 - `.gitconfig`, `.vimrc`
   Personal editor and Git configuration also managed by this repo.
@@ -86,6 +99,8 @@ Important detail: `.zsh_prompt` also defines `precmd()`. If you change prompt ho
   - Optional external tools such as `pngquant` and `tree`
 - `.aliases` and `.functions` may intentionally reference directories or hosts that only exist on the user's machine.
 - `.zsh/completions/_sshconn` depends on `$HOME/.connections`, which is not stored in this repo.
+- `bin/proj` needs `tmux`, and `fzf` for the bare picker. Neither is installed on the MacBook, where `pm` is the intended entry point — `proj` there exits with a clear message rather than failing obscurely.
+- `bin/pm` assumes Tailscale is up on both machines and that SSH key auth works. It does not fall back to the LAN address, deliberately: the tailnet name survives the Mini's DHCP lease changing.
 
 ## Editing Guidance
 
