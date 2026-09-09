@@ -4,16 +4,28 @@
 #
 #   proj                    fuzzy-pick a project, then attach to its session
 #   proj <name>             attach to <name>'s session, creating it if needed
-#   proj <name> claude      ... and start Claude Code in it
+#   proj <name> claude      ... and start Claude Code, continuing this
+#                           directory's last conversation if there is one
 #   proj <name> codex       ... and start Codex in it
+#   proj <name> claude new  force a fresh conversation instead of continuing
 #   proj -l                 list projects, marking the ones with a live session
 #   proj -k <name>          kill <name>'s session
 #
 # One session per project, named after the directory. Sessions persist across
 # disconnects, so an agent left running mid-task is still running when you come
-# back. Sessions not created by this script (hope, playdate) are left alone.
+# back, and reachable from the Claude app. Sessions not created by this script
+# (hope, playdate) are left alone.
+#
+# Asking for an agent that is already running in the session attaches to it
+# rather than starting a second one: going back to the work is the common case.
 #
 set -uo pipefail
+
+# Answer --help before checking anything: asking how a command works should
+# not require its dependencies to be installed.
+case "${1:-}" in
+  -h|--help) sed -n '2,21p' "$0" | sed 's/^# \{0,1\}//'; exit 0 ;;
+esac
 
 ROOT="${PROJECTS_DIR:-$HOME/Projects}"
 [ -d "$ROOT" ] || { echo "No such directory: $ROOT" >&2; exit 1; }
@@ -29,12 +41,37 @@ projects() { find "$ROOT" -mindepth 1 -maxdepth 1 -type d -exec test -d '{}/.git
 sess_name() { printf '%s' "$1" | tr '.:' '__'; }
 has_sess()  { tmux has-session -t "=$1" 2>/dev/null; }
 
+# Claude Code files a directory's transcripts under a key built by replacing
+# every "/" and "." in the absolute path with "-".
+transcript_dir() { printf '%s/.claude/projects/%s' "$HOME" "$(printf '%s' "$1" | tr './' '--')"; }
+
+has_prior_conversation() { # has_prior_conversation <project dir>
+  local d; d="$(transcript_dir "$1")"
+  [ -d "$d" ] || return 1
+  set -- "$d"/*.jsonl
+  [ -e "$1" ]
+}
+
+# tmux reports the wrapper shell as pane_current_command, not the agent running
+# inside it, so ask the panes' child processes instead.
+session_runs() { # session_runs <session> <needle>
+  local sess="$1" needle="$2" pid kid
+  while IFS= read -r pid; do
+    [ -n "$pid" ] || continue
+    for kid in $(pgrep -P "$pid" 2>/dev/null); do
+      case "$(ps -p "$kid" -o comm= 2>/dev/null)" in
+        *"$needle"*) return 0 ;;
+      esac
+    done
+  done < <(tmux list-panes -s -t "=$sess" -F '#{pane_pid}' 2>/dev/null)
+  return 1
+}
+
 enter() {  # enter <session>
   if [ -n "${TMUX:-}" ]; then tmux switch-client -t "=$1"; else tmux attach-session -t "=$1"; fi
 }
 
 case "${1:-}" in
-  -h|--help) sed -n '2,16p' "$0" | sed 's/^# \{0,1\}//'; exit 0 ;;
   -l|--list)
     while IFS= read -r p; do
       if has_sess "$(sess_name "$p")"; then printf '  \033[32m*\033[0m %s\n' "$p"
@@ -52,6 +89,7 @@ esac
 
 NAME="${1:-}"
 AGENT="${2:-}"
+FRESH="${3:-}"   # "new" forces a fresh conversation / an extra agent window
 
 if [ -z "$NAME" ]; then
   command -v fzf >/dev/null || { echo "fzf not installed; pass a project name, or: brew install fzf" >&2; exit 1; }
@@ -75,15 +113,32 @@ SESS=$(sess_name "$NAME")
 # Resolve the agent to an absolute path here, while PATH is known good. The
 # tmux server may have been started with a different environment, and a bare
 # name would be looked up there instead.
+# Hand back to a login shell when the agent exits, so the session survives and
+# keeps its working directory.
+BACK_TO_SHELL="exec ${SHELL:-/bin/zsh} -l"
+
 AGENT_CMD=""
 case "$AGENT" in
   ""|shell) ;;
-  claude|codex)
-    AGENT_BIN=$(command -v "$AGENT") || {
-      echo "'$AGENT' is not installed or not on PATH." >&2; exit 1; }
-    # Hand back to a login shell when the agent exits, so the session survives
-    # and you keep the working directory.
-    AGENT_CMD="$AGENT_BIN; exec ${SHELL:-/bin/zsh} -l"
+  claude)
+    AGENT_BIN=$(command -v claude) || {
+      echo "'claude' is not installed or not on PATH." >&2; exit 1; }
+    # Rejoin the directory's last conversation rather than starting over. A
+    # project that lives on this machine is usually being returned to, not
+    # begun, and a fresh session would silently lose the thread.
+    if [ "$FRESH" != new ] && has_prior_conversation "$DIR"; then
+      AGENT_CMD="$AGENT_BIN --continue; $BACK_TO_SHELL"
+    else
+      AGENT_CMD="$AGENT_BIN; $BACK_TO_SHELL"
+    fi
+    ;;
+  codex)
+    AGENT_BIN=$(command -v codex) || {
+      echo "'codex' is not installed or not on PATH." >&2; exit 1; }
+    # Codex has `codex resume --last`, but its per-directory session layout is
+    # not something this script can detect reliably, so it starts fresh. Resume
+    # by hand from inside the session.
+    AGENT_CMD="$AGENT_BIN; $BACK_TO_SHELL"
     ;;
   *)
     echo "Unknown agent '$AGENT' (expected: claude, codex, shell)." >&2; exit 2 ;;
@@ -98,9 +153,13 @@ if ! has_sess "$SESS"; then
     tmux new-session -d -s "$SESS" -c "$DIR" || exit 1
   fi
 elif [ -n "$AGENT_CMD" ]; then
-  # Session already exists; give the agent its own window rather than typing
-  # into whatever is already running there.
-  tmux new-window -t "=$SESS" -c "$DIR" "$AGENT_CMD"
+  if [ "$FRESH" != new ] && session_runs "$SESS" "$AGENT"; then
+    # Already running there. Attaching is what "open my project" means; a second
+    # copy would fight the first over the same conversation.
+    printf "%s is already running in '%s' — attaching.\n" "$AGENT" "$SESS" >&2
+  else
+    tmux new-window -t "=$SESS" -c "$DIR" "$AGENT_CMD"
+  fi
 fi
 
 enter "$SESS"
