@@ -92,7 +92,13 @@ printf '\n'
 rule "STAYING IN SYNC"
 note "${C_WARN}GitHub is the source of truth, not Dropbox.${C_OFF}"
 note "Commit and push before switching machines — nothing warns you."
-row "sync-secrets" "copy .env files to the Mini (they never mirror)"
+if [ "$IS_MINI" = 1 ]; then
+  # sync-secrets pushes from the MacBook to here; running it on the Mini would
+  # mean syncing the machine to itself.
+  note "${C_DIM}.env files arrive via sync-secrets, run from the MacBook.${C_OFF}"
+else
+  row "sync-secrets" "copy .env files to the Mini (they never mirror)"
+fi
 
 printf '\n'
 printf '    %shello%s to show this again · %shello --no-art%s for just the list\n' \
