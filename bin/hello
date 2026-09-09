@@ -63,22 +63,23 @@ fi
 printf '\n'
 
 if [ "$IS_MINI" = 1 ]; then
-  rule "PROJECTS"
+  rule "RESIDENT PROJECTS"
   row "proj"                "fuzzy-pick a project and open its session"
-  row "proj <name> claude"  "… with Claude Code running"
-  row "proj <name> codex"   "… with Codex running"
-  row "proj -l"             "list projects, ${C_KEY}*${C_OFF} marks a live session"
+  row "proj <name> claude"  "open it, continuing the last conversation"
+  row "proj <name> claude new" "start a fresh conversation instead"
+  row "proj <name> codex"   "Codex instead (always starts fresh)"
+  row "proj -l"             "what exists, ${C_KEY}*${C_OFF} marks a live session"
   row "proj -k <name>"      "kill a session (needs the exact name)"
 else
-  rule "PROJECTS — on the Mac Mini"
-  row "pm"                  "fuzzy-pick a project on the Mini and open it"
-  row "pm <name> claude"    "… with Claude Code running"
-  row "pm -l"               "list projects, ${C_KEY}*${C_OFF} marks a live session"
+  rule "LIVES ON THE MINI — reachable from the Claude app"
+  row "pm <name> claude"    "open it, continuing the last conversation"
+  row "pm <name> claude new" "start a fresh conversation instead"
+  row "pm"                  "fuzzy-pick instead of naming it"
+  row "pm -l"               "what exists, ${C_KEY}*${C_OFF} marks a live session"
   row "pm -s"               "plain shell on the Mini, no tmux"
   printf '\n'
-  rule "PROJECTS — here"
+  rule "HERE, NOW — ends with this terminal"
   row "lpd"                 "launchpad TUI — descriptions, last opened"
-  row "proj <name>"         "local tmux session (needs tmux + fzf)"
 fi
 
 printf '\n'
@@ -98,6 +99,13 @@ if [ "$IS_MINI" = 1 ]; then
   note "${C_DIM}.env files arrive via sync-secrets, run from the MacBook.${C_OFF}"
 else
   row "sync-secrets" "copy .env files to the Mini (they never mirror)"
+fi
+
+if [ "$IS_MINI" != 1 ]; then
+  printf '\n'
+  rule "WORTH REMEMBERING"
+  note "A live agent costs ~1.2 GB; the Mini has 16 GB."
+  note "Let Claude exit when done — ${C_KEY}claude -c${C_OFF} resumes it from disk for free."
 fi
 
 printf '\n'
