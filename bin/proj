@@ -1,34 +1,40 @@
 #!/usr/bin/env bash
 #
-# proj — open a project in its own tmux session, optionally with an agent running.
+# proj — make a project reachable, or open it in a terminal.
 #
-#   proj                    fuzzy-pick a project, then attach to its session
-#   proj <name>             attach to <name>'s session, creating it if needed
-#   proj <name> claude      ... and start Claude Code with Remote Control on,
-#                           named after the project so it is selectable in the
-#                           Claude app, continuing this directory's last
-#                           conversation if there is one
-#   proj <name> codex       ... and start Codex in it
-#   proj <name> claude new  force a fresh conversation instead of continuing
-#   proj -l                 list projects, marking the ones with a live session
+#   proj                    fuzzy-pick a project, then open a shell in it
+#   proj <name>             open a shell in <name>'s session, creating it if needed
+#   proj <name> claude      make <name> reachable from the Claude app, and return
+#                           to your prompt — no terminal to attach to or detach from
+#   proj <name> codex       start Codex in <name>'s session and attach
+#   proj -r                 bring up every project listed as resident
+#   proj -l                 list projects, marking live sessions and resident ones
 #   proj -k <name>          kill <name>'s session
 #
-# One session per project, named after the directory. Sessions persist across
-# disconnects, so an agent left running mid-task is still running when you come
-# back, and reachable from the Claude app. Sessions not created by this script
-# (hope, playdate) are left alone.
+# `proj <name> claude` starts a Remote Control *server* — the `claude
+# remote-control` subcommand, not the `--remote-control` flag. The server holds
+# no conversation of its own; it registers an environment, and the Claude app
+# creates sessions inside it on demand. There is nothing to sit in, which is the
+# point: the old flag mirrored one interactive session, so any stray Ctrl-C in
+# the terminal killed what the app was looking at.
 #
-# Asking for an agent that is already running in the session attaches to it
-# rather than starting a second one: going back to the work is the common case.
+# An environment must exist before the app can reach a project. Without one the
+# app silently falls back to a *cloud* session and asks you to select a GitHub
+# repository — which looks like a permissions failure and is not one.
 #
-# Set PROJ_NO_REMOTE_CONTROL=1 to start Claude without Remote Control.
+# Resident projects are listed one per line in ~/.config/proj/resident and are
+# brought up together by `proj -r`, which a LaunchAgent runs at login.
+#
+# Set PROJ_NO_REMOTE_CONTROL=1 to get the old behaviour instead: an ordinary
+# interactive Claude Code session in tmux, continuing this directory's last
+# conversation, which you attach to.
 #
 set -uo pipefail
 
 # Answer --help before checking anything: asking how a command works should
 # not require its dependencies to be installed.
 case "${1:-}" in
-  -h|--help) sed -n '2,25p' "$0" | sed 's/^# \{0,1\}//'; exit 0 ;;
+  -h|--help) sed -n '2,30p' "$0" | sed 's/^# \{0,1\}//'; exit 0 ;;
 esac
 
 ROOT="${PROJECTS_DIR:-$HOME/Projects}"
@@ -39,11 +45,27 @@ command -v tmux >/dev/null || { echo "tmux is not installed" >&2; exit 1; }
 case ":$PATH:" in *":$HOME/.local/bin:"*) ;; *) PATH="$HOME/.local/bin:$PATH" ;; esac
 export PATH
 
+RC_LOG_DIR="${XDG_STATE_HOME:-$HOME/.local/state}/proj"
+RESIDENT_FILE="${PROJ_RESIDENT_FILE:-${XDG_CONFIG_HOME:-$HOME/.config}/proj/resident}"
+
 projects() { find "$ROOT" -mindepth 1 -maxdepth 1 -type d -exec test -d '{}/.git' ';' -print \
              | sed "s|^$ROOT/||" | sort; }
 # tmux treats '.' and ':' as address separators.
 sess_name() { printf '%s' "$1" | tr '.:' '__'; }
 has_sess()  { tmux has-session -t "=$1" 2>/dev/null; }
+
+# Comments and blank lines let the list carry a note about why something is on it.
+resident_list() {
+  [ -f "$RESIDENT_FILE" ] || return 0
+  sed 's/#.*//' "$RESIDENT_FILE" | awk 'NF { $1=$1; print }'
+}
+is_resident() { resident_list | grep -qxF -- "$1"; }
+
+# The server puts the project name on its own command line, so ask the process
+# table rather than tracking state in a file that could go stale.
+rc_running() { pgrep -f -- "remote-control --name $1 " >/dev/null 2>&1; }
+
+rc_log() { printf '%s/%s-rc.log' "$RC_LOG_DIR" "$1"; }
 
 # Claude Code files a directory's transcripts under a key built by replacing
 # every "/" and "." in the absolute path with "-".
@@ -75,13 +97,72 @@ enter() {  # enter <session>
   if [ -n "${TMUX:-}" ]; then tmux switch-client -t "=$1"; else tmux attach-session -t "=$1"; fi
 }
 
+# Start the Remote Control server for a project in its tmux session, detached.
+# The log is truncated per start: it exists to explain the session in front of
+# you, and `--debug-file` is the only place a registration failure shows up --
+# the pane itself cheerfully reports "Ready" while every session creation fails.
+start_rc() { # start_rc <name> <dir> <session>
+  local name="$1" dir="$2" sess="$3" bin log cmd
+  bin=$(command -v claude) || { echo "'claude' is not installed or not on PATH." >&2; return 1; }
+  log=$(rc_log "$name")
+  mkdir -p "$RC_LOG_DIR" && : > "$log"
+  # --spawn must be explicit. Without it the subcommand asks interactively which
+  # spawn mode to use, and a session created detached is never attached, so it
+  # waits on that prompt forever while looking perfectly healthy.
+  printf -v cmd '%q remote-control --name %q --spawn same-dir --permission-mode bypassPermissions --debug-file %q --verbose; exec %q -l' \
+    "$bin" "$name" "$log" "${SHELL:-/bin/zsh}"
+  if has_sess "$sess"; then tmux new-window -d -t "=$sess" -c "$dir" "$cmd"
+  else                      tmux new-session -d -s "$sess" -c "$dir" "$cmd"; fi
+}
+
+# Registration takes a second or two. Wait for it rather than printing nothing,
+# because the environment id is the one piece of evidence that it worked.
+rc_url() { # rc_url <name>
+  local log id i
+  log=$(rc_log "$1")
+  for i in $(seq 1 40); do
+    id=$(grep -ho 'environment_id=env_[A-Za-z0-9]*' "$log" 2>/dev/null | tail -1 | cut -d= -f2)
+    [ -n "$id" ] && { printf 'https://claude.ai/code?environment=%s\n' "$id"; return 0; }
+    sleep 0.5
+  done
+  return 1
+}
+
+# Resolve a possibly-partial name to a real project directory.
+resolve() { # resolve <name>
+  local name="$1" match
+  [ -d "$ROOT/$name" ] && { printf '%s' "$name"; return 0; }
+  match=$(projects | grep -ix -- "$name" || projects | grep -i -- "$name" | head -1)
+  [ -n "$match" ] || return 1
+  printf '%s' "$match"
+}
+
 case "${1:-}" in
   -l|--list)
     while IFS= read -r p; do
-      if has_sess "$(sess_name "$p")"; then printf '  \033[32m*\033[0m %s\n' "$p"
-      else                                  printf '    %s\n' "$p"; fi
+      marks=""
+      rc_running "$p"  && marks="remote control"
+      is_resident "$p" && marks="${marks:+$marks, }resident"
+      if has_sess "$(sess_name "$p")"; then printf '  \033[32m*\033[0m %-32s %s\n' "$p" "$marks"
+      else                                  printf '    %-32s %s\n' "$p" "$marks"; fi
     done < <(projects)
-    echo; echo "  * = live session"
+    echo; echo "  * = live tmux session"
+    exit 0 ;;
+  -r|--resident)
+    # Bring up everything on the list. Already-running projects are left alone,
+    # so this is safe to run again -- which is what makes it fit a LaunchAgent.
+    n=0
+    while IFS= read -r p; do
+      [ -n "$p" ] || continue
+      name=$(resolve "$p") || { echo "proj -r: no project matching '$p'" >&2; continue; }
+      if rc_running "$name"; then
+        printf '  = %s (already up)\n' "$name"
+      else
+        start_rc "$name" "$ROOT/$name" "$(sess_name "$name")" \
+          && { printf '  + %s\n' "$name"; n=$((n+1)); }
+      fi
+    done < <(resident_list)
+    [ "$n" -gt 0 ] && printf '\nBrought up %d project(s). They are in the Claude app now.\n' "$n"
     exit 0 ;;
   -k|--kill)
     [ $# -ge 2 ] || { echo "usage: proj -k <name>" >&2; exit 2; }
@@ -105,14 +186,28 @@ if [ -z "$NAME" ]; then
   [ -n "$NAME" ] || exit 0
 fi
 
+NAME=$(resolve "$NAME") || { echo "No project matching '${1:-}' under $ROOT" >&2; exit 1; }
 DIR="$ROOT/$NAME"
-if [ ! -d "$DIR" ]; then
-  match=$(projects | grep -ix -- "$NAME" || projects | grep -i -- "$NAME" | head -1)
-  [ -n "$match" ] || { echo "No project matching '$NAME' under $ROOT" >&2; exit 1; }
-  NAME="$match"; DIR="$ROOT/$NAME"
-fi
-
 SESS=$(sess_name "$NAME")
+
+# Claude is the one agent that does not end in an attached terminal, so it is
+# handled here and exits rather than falling through to `enter`.
+if [ "$AGENT" = claude ] && [ -z "${PROJ_NO_REMOTE_CONTROL:-}" ]; then
+  [ "$FRESH" = new ] && echo "proj: 'new' has no meaning for a Remote Control server — the app creates the sessions." >&2
+  if rc_running "$NAME"; then
+    printf "'%s' is already reachable from the Claude app.\n" "$NAME"
+  else
+    start_rc "$NAME" "$DIR" "$SESS" || exit 1
+    printf "Started Remote Control for '%s'.\n" "$NAME"
+  fi
+  if url=$(rc_url "$NAME"); then
+    printf '  %s\n' "$url"
+  else
+    printf '  Registration has not shown up yet — check %s\n' "$(rc_log "$NAME")" >&2
+  fi
+  printf '  In the Claude app, pick it from the environment chip beside the composer.\n'
+  exit 0
+fi
 
 # Resolve the agent to an absolute path here, while PATH is known good. The
 # tmux server may have been started with a different environment, and a bare
@@ -125,24 +220,16 @@ AGENT_CMD=""
 case "$AGENT" in
   ""|shell) ;;
   claude)
+    # Only reached under PROJ_NO_REMOTE_CONTROL: an ordinary interactive session.
     AGENT_BIN=$(command -v claude) || {
       echo "'claude' is not installed or not on PATH." >&2; exit 1; }
-    # Remote Control, named after the project, so the session is reachable from
-    # the Claude app the moment it exists. Without it a session started this way
-    # never attaches to a terminal, never shows its pairing prompt, and stays
-    # invisible to the app -- which is the whole point of running it here.
-    # The name is what the app lists, so "google-services" beats a hostname.
-    RC_ARG=""
-    if [ -z "${PROJ_NO_REMOTE_CONTROL:-}" ]; then
-      printf -v RC_ARG ' --remote-control %q' "$NAME"
-    fi
     # Rejoin the directory's last conversation rather than starting over. A
     # project that lives on this machine is usually being returned to, not
     # begun, and a fresh session would silently lose the thread.
     if [ "$FRESH" != new ] && has_prior_conversation "$DIR"; then
-      AGENT_CMD="$AGENT_BIN$RC_ARG --continue; $BACK_TO_SHELL"
+      AGENT_CMD="$AGENT_BIN --continue; $BACK_TO_SHELL"
     else
-      AGENT_CMD="$AGENT_BIN$RC_ARG; $BACK_TO_SHELL"
+      AGENT_CMD="$AGENT_BIN; $BACK_TO_SHELL"
     fi
     ;;
   codex)
