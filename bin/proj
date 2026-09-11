@@ -62,8 +62,16 @@ resident_list() {
 is_resident() { resident_list | grep -qxF -- "$1"; }
 
 # The server puts the project name on its own command line, so ask the process
-# table rather than tracking state in a file that could go stale.
-rc_running() { pgrep -f -- "remote-control --name $1 " >/dev/null 2>&1; }
+# table rather than tracking state in a file that could go stale. Match on the
+# claude process itself: any shell whose command line merely mentions the name
+# -- tmux's wrapper, an ssh one-liner, a grep -- would otherwise count as up.
+rc_running() {
+  local pid
+  for pid in $(pgrep -f -- "remote-control --name $1 " 2>/dev/null); do
+    case "$(ps -p "$pid" -o comm= 2>/dev/null)" in claude|*/claude) return 0 ;; esac
+  done
+  return 1
+}
 
 rc_log() { printf '%s/%s-rc.log' "$RC_LOG_DIR" "$1"; }
 
