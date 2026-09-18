@@ -6,16 +6,25 @@ HOME_DIR="${HOME:?HOME is not set}"
 
 BACKUP=true
 DRY_RUN=false
+CHECK_ONLY=false
+FORCE=false
 
 usage() {
   cat <<'USAGE'
-Usage: ./install.sh [--no-backup] [--dry-run]
+Usage: ./install.sh [--no-backup] [--dry-run] [--check] [--force]
 
 Copies all dotfiles from this repo into $HOME.
+
+Before touching anything it checks for drift: a deployed file that matches no
+version this repo has ever had (it was edited in place), or a file inside an
+installed directory that the repo does not have (installing would displace it).
+Either one stops the install.
 
 Options:
   --no-backup   Overwrite existing files without backing them up
   --dry-run     Show what would happen without making changes
+  --check       Only run the drift check; exit 1 if it finds anything
+  --force       Install even if the drift check finds something
 
 Example:
   ./install.sh --dry-run
@@ -30,6 +39,14 @@ while [[ $# -gt 0 ]]; do
       ;;
     --dry-run)
       DRY_RUN=true
+      shift
+      ;;
+    --check)
+      CHECK_ONLY=true
+      shift
+      ;;
+    --force)
+      FORCE=true
       shift
       ;;
     -h|--help)
@@ -168,6 +185,76 @@ done < <(find "$REPO_DIR" -maxdepth 1 -mindepth 1 -print0)
 if [[ ${#items[@]} -eq 0 ]]; then
   echo "No files found to install." >&2
   exit 1
+fi
+
+# Drift check. A deployed file is safe to overwrite if its content matches some
+# version the repo has had -- current or older -- because then nothing is lost.
+# Content that matches no version was edited in place, and a file inside an
+# installed directory that the repo does not track (~/.zsh/completions/_hey,
+# written by the HEY CLI) would be swept into the backup folder and stop
+# working. Either is drift. Content is compared by git blob hash, so the check
+# needs no record of what was installed when. Written for bash 3.2: the Mini's
+# /usr/bin/env bash is the one macOS ships.
+drift_check() {
+  if ! command -v git >/dev/null 2>&1 || ! git -C "$REPO_DIR" rev-parse --git-dir >/dev/null 2>&1; then
+    echo "⚠️  drift check skipped: needs git and a git checkout" >&2
+    return 0
+  fi
+
+  local known found=0 item base dst rel f h
+  known="$(mktemp)"
+  git -C "$REPO_DIR" rev-list --objects --all | awk '{print $1}' > "$known"
+
+  for item in "${items[@]}"; do
+    base="$(basename -- "$item")"
+    dst="${HOME_DIR}/${base}"
+
+    if is_link_into "$base"; then
+      for f in "$item"/*; do
+        [[ -e "$f" ]] || continue
+        rel="${base}/$(basename -- "$f")"
+        if [[ -e "${HOME_DIR}/${rel}" && ! ( -L "${HOME_DIR}/${rel}" && "$(readlink -- "${HOME_DIR}/${rel}")" == "$f" ) ]]; then
+          echo "  ✋ ~/${rel}: not a link to this repo"
+          found=1
+        fi
+      done
+      continue
+    fi
+
+    [[ -e "$dst" ]] || continue
+    while IFS= read -r rel; do
+      if [[ ! -e "${REPO_DIR}/${rel}" ]]; then
+        echo "  ✋ ~/${rel}: not in the repo; installing would move it to the backup"
+        found=1
+        continue
+      fi
+      h="$(git hash-object -- "${HOME_DIR}/${rel}")"
+      if [[ "$h" != "$(git hash-object -- "${REPO_DIR}/${rel}")" ]] && ! grep -qx "$h" "$known"; then
+        echo "  ✋ ~/${rel}: edited in place (matches no repo version)"
+        echo "       see: diff ~/${rel} ${REPO_DIR}/${rel}"
+        found=1
+      fi
+    done < <(cd "$HOME_DIR" && find "$base" \( -type f -o -type l \))
+  done
+
+  rm -f -- "$known"
+  return "$found"
+}
+
+echo "🔍 checking deployed files for drift"
+if drift_check; then
+  echo "✅ no drift: every deployed file matches a version of this repo"
+  $CHECK_ONLY && exit 0
+else
+  $CHECK_ONLY && exit 1
+  if $FORCE; then
+    echo "⚠️  drift found; installing anyway (--force)"
+  elif $DRY_RUN; then
+    echo "⚠️  drift found; a real install would stop here (--force overrides)"
+  else
+    echo "🛑 drift found; nothing installed. Fold those changes into the repo, or rerun with --force." >&2
+    exit 1
+  fi
 fi
 
 if $BACKUP; then

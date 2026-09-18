@@ -66,6 +66,8 @@ If repo contents or behavior conflict with the request, stop and surface the con
 - `install.sh`
   Installer that copies top-level repo items into `$HOME`, excluding `.git`, `AGENTS.md`, and `install.sh`. Existing targets are optionally moved into a timestamped backup directory first.
 
+  **It checks for drift before touching anything, and stops if it finds any.** A deployed file whose git blob hash matches no version in the repo's history was edited in place. A file inside an installed directory that the repo does not track would be displaced. `--check` runs only the check, and `--force` overrides it. Hashing against history means no record of past installs is needed, and a file that is merely an older version passes. Keep it bash 3.2 compatible, because the Mini runs the macOS system bash.
+
   **Exception: `LINK_INTO`.** Directories named there (currently just `bin`) have their *contents* symlinked into `$HOME/<name>/` one file at a time, rather than the directory being replaced. Two reasons, both load-bearing. Editing a script in the repo takes effect immediately, and `git pull` updates the installed command with no second step. And `~/bin` already contains things this repo does not manage — `hey`, `sshconn`, `httpcompression`, and symlinks to `bash` and `subl` — which replacing the directory wholesale would move into the backup folder and break. The per-file path also skips the wholesale backup loop and backs up only the individual files it actually replaces, and leaves a correct existing symlink alone.
 
 - `.gitconfig`, `.vimrc`

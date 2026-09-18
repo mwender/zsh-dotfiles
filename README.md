@@ -39,6 +39,14 @@ Dry run:
 ./install.sh --dry-run
 ```
 
+Before copying anything, the installer checks each deployed file for drift and stops if it finds any. Drift means content that matches no version the repo has ever had, so it was edited in place. It also means a file inside an installed directory that the repo does not track, which the install would move into the backup folder. Files that are merely older versions are fine. To run only the check (exit 1 on drift):
+
+```
+./install.sh --check
+```
+
+`--force` installs anyway.
+
 Everything at the top level is **copied** into `$HOME`, except `bin/`, whose
 contents are **symlinked** one file at a time into `~/bin`. That means editing
 `bin/proj` in this repo takes effect immediately and a `git pull` updates the
@@ -78,6 +86,10 @@ Tab-completion for `pm` fetches the Mini's project list over SSH and caches it a
 that file to force a refresh.
 
 ## Changelog
+
+### 0.1.5 (2026-09-18)
+- `install.sh` checks for drift before installing (`--check` to run only that, `--force` to override).
+- `.vimrc` creates `~/.vim/backups`, `swaps` and `undo` if missing, instead of failing every write with E510 on a machine that lacks them. The directories now end in `//`, so same-named files in different directories keep separate backups.
 
 ### 0.1.4 (2026-09-09)
 - Added `bin/proj` — per-project tmux sessions, with optional Claude Code or Codex.

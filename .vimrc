@@ -24,11 +24,20 @@ let mapleader=","
 " Don’t add empty newlines at the end of files
 set binary
 set noeol
-" Centralize backups, swapfiles and undo history
-set backupdir=~/.vim/backups
-set directory=~/.vim/swaps
+" Centralize backups, swapfiles and undo history. Create the directories if
+" they are missing: install.sh does not, and without backupdir every write
+" fails with E510 (can't make backup file) until forced with :w!.
+for s:dir in ['backups', 'swaps', 'undo']
+	if !isdirectory(expand('~/.vim/' . s:dir))
+		call mkdir(expand('~/.vim/' . s:dir), 'p', 0700)
+	endif
+endfor
+" The trailing // names each file after its full path, so two files with the
+" same name in different directories cannot overwrite each other's backups.
+set backupdir=~/.vim/backups//
+set directory=~/.vim/swaps//
 if exists("&undodir")
-	set undodir=~/.vim/undo
+	set undodir=~/.vim/undo//
 endif
 
 " Don’t create backups when editing files in certain directories
