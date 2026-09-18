@@ -47,6 +47,11 @@ fi
 remote="proj"
 for a in "$@"; do remote="$remote $(shquote "$a")"; done
 
+# SSH carries the arguments, not the environment. Forward the one variable
+# proj's documented forms rely on, or `PROJ_NO_REMOTE_CONTROL=1 pm <name>
+# claude` silently becomes the Remote Control form on the far side.
+[ -n "${PROJ_NO_REMOTE_CONTROL:-}" ] && remote="PROJ_NO_REMOTE_CONTROL=1 $remote"
+
 # A login shell is required: `ssh host cmd` runs zsh non-login and
 # non-interactive, which sources only .zshenv — so Homebrew and ~/bin would
 # both be missing from PATH and proj would not be found.
