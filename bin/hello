@@ -112,13 +112,14 @@ if [ "$IS_MINI" = 1 ]; then
   row "proj <name> claude"  "serve it to the Claude app (sessions start there)"
   row "proj <name> codex"   "Codex in a terminal (always starts fresh)"
   row "proj -l"             "what exists, ${C_KEY}*${C_OFF} marks a live session"
-  row "proj -k <name>"      "kill a session (needs the exact name)"
+  row "proj -k <name>"      "stop it (exact name) — resident ones come back"
   row "proj login"          "renew the claude.ai login (~monthly)"
 else
   rule "LIVES ON THE MINI — reachable from the Claude app"
   row "pm <name> claude"    "serve it to the Claude app (sessions start there)"
   row "pm"                  "fuzzy-pick instead of naming it"
   row "pm -l"               "what exists, ${C_KEY}*${C_OFF} marks a live session"
+  row "pm -k <name>"        "stop it (exact name) — resident ones come back"
   row "pm -s"               "plain shell on the Mini, no tmux"
   row "pm login"            "renew the Mini's claude.ai login (~monthly)"
   printf '\n'
@@ -149,6 +150,8 @@ if [ "$IS_MINI" != 1 ]; then
   printf '\n'
   rule "WORTH REMEMBERING"
   note "A live agent costs ~1.2 GB; the Mini has 16 GB."
+  note "Resident projects restart within 30 min of ${C_KEY}pm -k${C_OFF} unless taken off"
+  note "${C_KEY}~/.config/proj/resident${C_OFF} on the Mini."
   note "Let Claude exit when done — ${C_KEY}claude -c${C_OFF} resumes it from disk for free."
 fi
 
