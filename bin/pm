@@ -7,6 +7,7 @@
 #   pm <name> claude        ... with Claude Code running
 #   pm <name> codex         ... with Codex running
 #   pm -l                   list projects and their live sessions
+#   pm login                renew the Mini's claude.ai login (~monthly)
 #   pm -k <name>            kill a session
 #   pm -s                   plain shell on the Mini, no tmux
 #
@@ -28,7 +29,7 @@ if [ "$(hostname -s 2>/dev/null)" = "$SELF" ]; then
 fi
 
 case "${1:-}" in
-  -h|--help) sed -n '2,18p' "$0" | sed 's/^# \{0,1\}//'; exit 0 ;;
+  -h|--help) sed -n '2,19p' "$0" | sed 's/^# \{0,1\}//'; exit 0 ;;
 esac
 
 # Keep the link alive across a lousy connection rather than dropping the

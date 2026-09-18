@@ -23,8 +23,9 @@ if [ -t 1 ] && [ "${TERM:-dumb}" != "dumb" ]; then
   C_HDR=$'\033[38;5;33m'                             # blue
   C_TXT=$'\033[0m';        C_WARN=$'\033[38;5;166m' # orange
   C_OFF=$'\033[0m';        C_B=$'\033[1m'
+  C_ERR=$'\033[38;5;160m'                            # red
 else
-  C_DIM=""; C_KEY=""; C_HDR=""; C_TXT=""; C_WARN=""; C_OFF=""; C_B=""
+  C_DIM=""; C_KEY=""; C_HDR=""; C_TXT=""; C_WARN=""; C_OFF=""; C_B=""; C_ERR=""
 fi
 
 ROOT="${PROJECTS_DIR:-$HOME/Projects}"
@@ -35,6 +36,48 @@ IS_MINI=0
 count_projects() {
   [ -d "$ROOT" ] || { echo 0; return; }
   find "$ROOT" -mindepth 1 -maxdepth 1 -type d -exec test -d '{}/.git' ';' -print 2>/dev/null | wc -l | tr -d ' '
+}
+
+# The Mini's claude.ai login lapses about monthly, and every Remote Control
+# server stops working when it does. proj writes the expiry to a file on the
+# Mini whenever it checks (every half hour, via the resident LaunchAgent). The
+# Mini reads that file; the MacBook reads a copy, refreshed in the background
+# at most every six hours, so a new shell never waits on SSH -- the warning can
+# be a few hours stale, which a seven-day lead absorbs.
+LOGIN_FILE="${XDG_STATE_HOME:-$HOME/.local/state}/proj/login-expires"
+LOGIN_CACHE="${XDG_CACHE_HOME:-$HOME/.cache}/wenmark/mini-login-expires"
+LOGIN_WARN_DAYS=7
+
+mini_login_expiry() {
+  if [ "$IS_MINI" = 1 ]; then cat "$LOGIN_FILE" 2>/dev/null; return; fi
+  local age=999999
+  [ -f "$LOGIN_CACHE" ] && age=$(( $(date +%s) - $(stat -f %m "$LOGIN_CACHE") ))
+  if [ "$age" -gt 21600 ]; then
+    mkdir -p "$(dirname "$LOGIN_CACHE")"
+    ( v=$(ssh -o BatchMode=yes -o ConnectTimeout=5 "${PM_HOST:-macmini@macs-mac-mini}" \
+            'cat ~/.local/state/proj/login-expires' 2>/dev/null) \
+        && [ -n "$v" ] && printf '%s\n' "$v" > "$LOGIN_CACHE" ) >/dev/null 2>&1 &
+    disown 2>/dev/null
+  fi
+  cat "$LOGIN_CACHE" 2>/dev/null
+}
+
+login_warning() {
+  local exp days fix="pm login"
+  exp=$(mini_login_expiry)
+  case "$exp" in ''|*[!0-9]*) return ;; esac   # nothing known yet: say nothing
+  [ "$IS_MINI" = 1 ] && fix="proj login"
+  if [ "$exp" -eq 0 ] || [ "$exp" -le "$(date +%s)" ]; then
+    printf '  %s%s! The Mini'"'"'s Claude login has lapsed — Remote Control is down.%s\n' "$C_B" "$C_ERR" "$C_OFF"
+    printf '    Run %s%s%s to renew it and restart the servers.\n\n' "$C_KEY" "$fix" "$C_OFF"
+    return
+  fi
+  days=$(( (exp - $(date +%s)) / 86400 ))
+  [ "$days" -lt "$LOGIN_WARN_DAYS" ] || return 0
+  printf '  %s! The Mini'"'"'s Claude login lapses in %s (%s).%s\n' "$C_WARN" \
+    "$( [ "$days" -eq 0 ] && echo "under a day" || { [ "$days" -eq 1 ] && echo "1 day" || echo "$days days"; } )" \
+    "$(date -r "$exp" '+%a %b %-d')" "$C_OFF"
+  printf '    Run %s%s%s any time before then — it takes a minute.\n\n' "$C_KEY" "$fix" "$C_OFF"
 }
 
 rule() { # rule <label>
@@ -61,22 +104,23 @@ if [ "$ART" = 1 ]; then
   printf '   %s╰──────────────╯%s\n' "$C_DIM" "$C_OFF"
 fi
 printf '\n'
+login_warning
 
 if [ "$IS_MINI" = 1 ]; then
   rule "RESIDENT PROJECTS"
   row "proj"                "fuzzy-pick a project and open its session"
-  row "proj <name> claude"  "open it, continuing the last conversation"
-  row "proj <name> claude new" "start a fresh conversation instead"
-  row "proj <name> codex"   "Codex instead (always starts fresh)"
+  row "proj <name> claude"  "serve it to the Claude app (sessions start there)"
+  row "proj <name> codex"   "Codex in a terminal (always starts fresh)"
   row "proj -l"             "what exists, ${C_KEY}*${C_OFF} marks a live session"
   row "proj -k <name>"      "kill a session (needs the exact name)"
+  row "proj login"          "renew the claude.ai login (~monthly)"
 else
   rule "LIVES ON THE MINI — reachable from the Claude app"
-  row "pm <name> claude"    "open it, continuing the last conversation"
-  row "pm <name> claude new" "start a fresh conversation instead"
+  row "pm <name> claude"    "serve it to the Claude app (sessions start there)"
   row "pm"                  "fuzzy-pick instead of naming it"
   row "pm -l"               "what exists, ${C_KEY}*${C_OFF} marks a live session"
   row "pm -s"               "plain shell on the Mini, no tmux"
+  row "pm login"            "renew the Mini's claude.ai login (~monthly)"
   printf '\n'
   rule "HERE, NOW — ends with this terminal"
   row "lpd"                 "launchpad TUI — descriptions, last opened"
