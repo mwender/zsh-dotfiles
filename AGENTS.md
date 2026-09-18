@@ -66,7 +66,7 @@ If repo contents or behavior conflict with the request, stop and surface the con
 - `install.sh`
   Installer that copies top-level repo items into `$HOME`, excluding `.git`, `AGENTS.md`, and `install.sh`. Existing targets are optionally moved into a timestamped backup directory first.
 
-  **It checks for drift before touching anything, and stops if it finds any.** A deployed file whose git blob hash matches no version in the repo's history was edited in place. A file inside an installed directory that the repo does not track would be displaced. `--check` runs only the check, and `--force` overrides it. Hashing against history means no record of past installs is needed, and a file that is merely an older version passes. Keep it bash 3.2 compatible, because the Mini runs the macOS system bash.
+  **It checks for drift before touching anything, and stops if it finds any.** A deployed file whose git blob hash matches no version in the repo's history was edited in place. A `~/bin` entry that is not a link to this repo is drift too. A file inside an installed directory that the repo does not track is only listed, since directories are merged. `--check` runs only the check, and `--force` overrides it. Hashing against history means no record of past installs is needed, and a file that is merely an older version passes. Keep it bash 3.2 compatible, because the Mini runs the macOS system bash.
 
   **Exception: `LINK_INTO`.** Directories named there (currently just `bin`) have their *contents* symlinked into `$HOME/<name>/` one file at a time, rather than the directory being replaced. Two reasons, both load-bearing. Editing a script in the repo takes effect immediately, and `git pull` updates the installed command with no second step. And `~/bin` already contains things this repo does not manage — `hey`, `sshconn`, `httpcompression`, and symlinks to `bash` and `subl` — which replacing the directory wholesale would move into the backup folder and break. The per-file path also skips the wholesale backup loop and backs up only the individual files it actually replaces, and leaves a correct existing symlink alone.
 
@@ -114,7 +114,7 @@ Important detail: `.zsh_prompt` also defines `precmd()`. If you change prompt ho
   - prompt hook interactions
   - whether completion initialization order still works
   - whether the change depends on tools that may not exist everywhere
-- When changing `install.sh`, remember it is destructive to existing targets after backup because it removes the destination before copying.
+- When changing `install.sh`, remember that top-level files are replaced (after backup), but top-level directories such as `.zsh` are **merged**: the repo's files are copied on top, only the ones it overwrites with different content are backed up, and files the repo does not track stay put. That matters because other tools write into `~/.zsh/completions` — `hey shell-completion install` puts `_hey` there. The trade-off is that a file deleted from the repo stays deployed until removed by hand.
 
 ## Safe Validation
 

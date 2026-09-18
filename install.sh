@@ -16,9 +16,10 @@ Usage: ./install.sh [--no-backup] [--dry-run] [--check] [--force]
 Copies all dotfiles from this repo into $HOME.
 
 Before touching anything it checks for drift: a deployed file that matches no
-version this repo has ever had (it was edited in place), or a file inside an
-installed directory that the repo does not have (installing would displace it).
-Either one stops the install.
+version this repo has ever had (it was edited in place), or a ~/bin entry that
+is not a link to this repo. Either one stops the install. Directories such as
+.zsh are merged, not replaced, so files in them the repo does not track are
+listed but left alone.
 
 Options:
   --no-backup   Overwrite existing files without backing them up
@@ -76,7 +77,12 @@ copy_item() {
     return 0
   fi
 
-  if [[ -e "$dst" ]]; then
+  # A directory is merged into an existing one, never replaced: the repo's files
+  # land on top and anything else in there stays put. ~/.zsh/completions also
+  # holds files other tools write -- `hey shell-completion install` puts _hey
+  # there -- and replacing the directory would silently switch them off. Only a
+  # type mismatch (file where a directory goes, or the reverse) is removed.
+  if [[ -e "$dst" || -L "$dst" ]] && ! [[ -d "$src" && -d "$dst" && ! -L "$dst" ]]; then
     echo "🧹 remove: ${dst}"
     rm -rf -- "$dst"
   fi
@@ -189,10 +195,10 @@ fi
 
 # Drift check. A deployed file is safe to overwrite if its content matches some
 # version the repo has had -- current or older -- because then nothing is lost.
-# Content that matches no version was edited in place, and a file inside an
-# installed directory that the repo does not track (~/.zsh/completions/_hey,
-# written by the HEY CLI) would be swept into the backup folder and stop
-# working. Either is drift. Content is compared by git blob hash, so the check
+# Content that matches no version was edited in place: that is drift, as is a
+# ~/bin entry that is not our link. A file inside an installed directory that
+# the repo does not track (~/.zsh/completions/_hey, written by the HEY CLI) is
+# only listed -- directories are merged, so the install leaves it alone. Content is compared by git blob hash, so the check
 # needs no record of what was installed when. Written for bash 3.2: the Mini's
 # /usr/bin/env bash is the one macOS ships.
 drift_check() {
@@ -224,8 +230,8 @@ drift_check() {
     [[ -e "$dst" ]] || continue
     while IFS= read -r rel; do
       if [[ ! -e "${REPO_DIR}/${rel}" ]]; then
-        echo "  ✋ ~/${rel}: not in the repo; installing would move it to the backup"
-        found=1
+        # Not drift: directories are merged, so the install leaves it alone.
+        echo "  ·  ~/${rel}: not in the repo; left alone"
         continue
       fi
       h="$(git hash-object -- "${HOME_DIR}/${rel}")"
@@ -265,6 +271,22 @@ if $BACKUP; then
       continue
     fi
     target="${HOME_DIR}/${base}"
+    # A directory is merged (see copy_item), so back up only the files in it
+    # that the repo is about to overwrite with different content.
+    if [[ -d "$item" && -d "$target" && ! -L "$target" ]]; then
+      while IFS= read -r rel; do
+        [[ -e "${HOME_DIR}/${rel}" ]] || continue
+        cmp -s -- "${REPO_DIR}/${rel}" "${HOME_DIR}/${rel}" && continue
+        if $DRY_RUN; then
+          echo "🧳 backup (dry-run): ~/${rel} -> ${backup_dir}/${rel}"
+        else
+          mkdir -p -- "$(dirname -- "${backup_dir}/${rel}")"
+          echo "🧳 backup: ~/${rel} -> ${backup_dir}/${rel}"
+          cp -p -- "${HOME_DIR}/${rel}" "${backup_dir}/${rel}"
+        fi
+      done < <(cd "$REPO_DIR" && find "$base" -type f)
+      continue
+    fi
     if [[ -e "$target" ]]; then
       if $DRY_RUN; then
         echo "🧳 backup (dry-run): ${target} -> ${backup_dir}/"
