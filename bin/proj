@@ -8,7 +8,8 @@
 #                           to your prompt — no terminal to attach to or detach from
 #   proj <name> codex       start Codex in <name>'s session and attach
 #   proj -r                 bring up every project listed as resident
-#   proj -l                 list projects, marking live sessions and resident ones
+#   proj -R                 restart every running server, then as -r -- after a /login
+#   proj -l                 list projects, marking live sessions, servers and residents
 #   proj -k <name>          kill <name>'s session
 #
 # `proj <name> claude` starts a Remote Control *server* — the `claude
@@ -33,14 +34,16 @@
 #
 # Set PROJ_NO_REMOTE_CONTROL=1 to get the old behaviour instead: an ordinary
 # interactive Claude Code session in tmux, continuing this directory's last
-# conversation, which you attach to.
+# conversation, which you attach to. That is also how to log in again when the
+# claude.ai login lapses, which `proj -l` flags and every start refuses on:
+# `/login` inside it, then `proj -R`.
 #
 set -uo pipefail
 
 # Answer --help before checking anything: asking how a command works should
 # not require its dependencies to be installed.
 case "${1:-}" in
-  -h|--help) sed -n '2,37p' "$0" | sed 's/^# \{0,1\}//'; exit 0 ;;
+  -h|--help) sed -n '2,41p' "$0" | sed 's/^# \{0,1\}//'; exit 0 ;;
 esac
 
 ROOT="${PROJECTS_DIR:-$HOME/Projects}"
@@ -87,6 +90,72 @@ rc_running() {
 }
 
 rc_log() { printf '%s/%s-rc.log' "$RC_LOG_DIR" "$1"; }
+
+# The Mini's claude.ai login lapses on its own when the refresh token expires,
+# and nothing announces it: a new server exits in a second, and running ones
+# keep their process -- and their "remote control" mark -- while every
+# heartbeat returns 401. So check the login itself.
+#
+# The credential is in the login keychain, which a bare SSH session cannot
+# read: `claude auth status` run straight from `pm` says logged out even when
+# it is not. The tmux server was started from the GUI login and can read it,
+# so ask it. With no tmux server yet, ask directly -- right at the Mini's own
+# terminal, and the best available otherwise.
+logged_in() {
+  local bin; bin=$(command -v claude) || return 1
+  if tmux list-sessions >/dev/null 2>&1; then
+    tmux run-shell "$(printf '%q auth status >/dev/null 2>&1' "$bin")" >/dev/null 2>&1
+  else
+    "$bin" auth status >/dev/null 2>&1
+  fi
+}
+
+login_help() {
+  cat >&2 <<'MSG'
+proj: Claude Code on this machine is not logged in to claude.ai, so no Remote
+      Control server can start. Log in from inside tmux, where the keychain is
+      readable -- see "Remote Control" in headless-mac-mini/AGENTS.md:
+
+        PROJ_NO_REMOTE_CONTROL=1 pm <name> claude     then /login in Claude
+
+      Afterwards restart the servers: `proj -R`.
+MSG
+}
+
+# A server's process outliving its login is the failure the process table
+# cannot see. Its log can: whichever came last, a token refresh or an auth
+# failure, says whether it is still able to work.
+rc_auth_failed() { # rc_auth_failed <name>
+  local last
+  last=$(grep -E 'Refreshing token for|Updated access token|Refresh chain exhausted|Authentication failed|must be logged in' \
+           "$(rc_log "$1")" 2>/dev/null | tail -1)
+  case "$last" in *exhausted*|*"Authentication failed"*|*"must be logged in"*) return 0 ;; esac
+  return 1
+}
+
+# Every running server, one "<pid> <name>" per line.
+rc_servers() {
+  local pid name
+  for pid in $(pgrep -f -- 'remote-control --name ' 2>/dev/null); do
+    case "$(ps -p "$pid" -o comm= 2>/dev/null)" in claude|*/claude) ;; *) continue ;; esac
+    name=$(ps -p "$pid" -o args= | sed -n 's/.*remote-control --name \([^ ]*\).*/\1/p')
+    [ -n "$name" ] && printf '%s %s\n' "$pid" "$name"
+  done
+}
+
+rc_pid() { rc_servers | awk -v n="$1" '$2 == n { print $1; exit }'; }
+
+# Stop a server and close the tmux pane it ran in, so a restart does not leave
+# an idle shell window behind. The pane's own process is the server's parent:
+# the `zsh -c` wrapper start_rc hands tmux, or the shell of a server started by
+# hand.
+stop_rc() { # stop_rc <pid>
+  local ppid pane
+  ppid=$(ps -p "$1" -o ppid= 2>/dev/null | tr -d ' ')
+  pane=$(tmux list-panes -a -F '#{pane_pid} #{pane_id}' 2>/dev/null | awk -v p="$ppid" '$1 == p { print $2; exit }')
+  if [ -n "$pane" ]; then tmux kill-pane -t "$pane"; else kill "$1" 2>/dev/null; fi
+  sleep 0.5
+}
 
 # Claude Code files a directory's transcripts under a key built by replacing
 # every "/" and "." in the absolute path with "-".
@@ -144,6 +213,9 @@ rc_url() { # rc_url <name>
   for i in $(seq 1 40); do
     id=$(grep -ho 'environment_id=env_[A-Za-z0-9]*' "$log" 2>/dev/null | tail -1 | cut -d= -f2)
     [ -n "$id" ] && { printf 'https://claude.ai/code?environment=%s\n' "$id"; return 0; }
+    # A server that failed to start is gone within a second or two; don't wait
+    # out the full twenty for it.
+    [ "$i" -gt 6 ] && ! rc_running "$1" && return 1
     sleep 0.5
   done
   return 1
@@ -158,11 +230,46 @@ resolve() { # resolve <name>
   printf '%s' "$match"
 }
 
+# Bring up every resident project that is not already serving. Already-running
+# ones are left alone, so this is safe to run again -- which is what makes it
+# fit a LaunchAgent.
+bring_up_residents() {
+  local n=0 p path name dir
+  while read -r p path; do
+    [ -n "$p" ] || continue
+    if [ -n "$path" ]; then
+      # An explicit path: taken as given, name and all. Checking the name
+      # first means a server started by hand under that name is adopted,
+      # not duplicated.
+      name="$p"; dir=$(expand_home "$path")
+      [ -d "$dir" ] || { echo "proj -r: '$name' points at $dir, which does not exist" >&2; continue; }
+    else
+      name=$(resolve "$p") || { echo "proj -r: no project matching '$p'" >&2; continue; }
+      dir="$ROOT/$name"
+    fi
+    if rc_running "$name"; then
+      printf '  = %s (already up)\n' "$name"
+    else
+      start_rc "$name" "$dir" "$(sess_name "$name")" \
+        && { printf '  + %s\n' "$name"; n=$((n+1)); }
+    fi
+  done < <(resident_list)
+  [ "$n" -gt 0 ] && printf '\nBrought up %d project(s). They are in the Claude app now.\n' "$n"
+  return 0
+}
+
+# A server's label in `proj -l`: running is not the same as working.
+rc_mark() { # rc_mark <name>
+  rc_running "$1" || return 0
+  if rc_auth_failed "$1"; then printf 'remote control (auth failed)'
+  else                         printf 'remote control'; fi
+}
+
 case "${1:-}" in
   -l|--list)
+    logged_in || printf '\n  \033[31m! Not logged in to claude.ai — no server here can work. Run `proj --help`.\033[0m\n\n'
     while IFS= read -r p; do
-      marks=""
-      rc_running "$p"  && marks="remote control"
+      marks=$(rc_mark "$p")
       is_resident "$p" && marks="${marks:+$marks, }resident"
       if has_sess "$(sess_name "$p")"; then printf '  \033[32m*\033[0m %-32s %s\n' "$p" "$marks"
       else                                  printf '    %-32s %s\n' "$p" "$marks"; fi
@@ -170,37 +277,33 @@ case "${1:-}" in
     if [ -n "$(resident_elsewhere)" ]; then
       echo; echo "  Outside $ROOT:"
       while read -r name path; do
-        marks="resident"
-        rc_running "$name" && marks="remote control, $marks"
+        marks=$(rc_mark "$name")
+        marks="${marks:+$marks, }resident"
         printf '    %-32s %s  (%s)\n' "$name" "$marks" "$path"
       done < <(resident_elsewhere)
     fi
     echo; echo "  * = live tmux session"
     exit 0 ;;
   -r|--resident)
-    # Bring up everything on the list. Already-running projects are left alone,
-    # so this is safe to run again -- which is what makes it fit a LaunchAgent.
-    n=0
-    while read -r p path; do
-      [ -n "$p" ] || continue
-      if [ -n "$path" ]; then
-        # An explicit path: taken as given, name and all. Checking the name
-        # first means a server started by hand under that name is adopted,
-        # not duplicated.
-        name="$p"; dir=$(expand_home "$path")
-        [ -d "$dir" ] || { echo "proj -r: '$name' points at $dir, which does not exist" >&2; continue; }
-      else
-        name=$(resolve "$p") || { echo "proj -r: no project matching '$p'" >&2; continue; }
-        dir="$ROOT/$name"
-      fi
-      if rc_running "$name"; then
-        printf '  = %s (already up)\n' "$name"
-      else
-        start_rc "$name" "$dir" "$(sess_name "$name")" \
-          && { printf '  + %s\n' "$name"; n=$((n+1)); }
-      fi
-    done < <(resident_list)
-    [ "$n" -gt 0 ] && printf '\nBrought up %d project(s). They are in the Claude app now.\n' "$n"
+    # Starting servers while logged out only produces servers that exit at
+    # once, every half hour when the LaunchAgent runs this.
+    logged_in || { login_help; exit 1; }
+    bring_up_residents
+    exit 0 ;;
+  -R|--restart)
+    # Restart every running server, then bring up any resident one that is
+    # down. This is the step after a fresh /login: a server reads the login
+    # once at start, so one that lost it never recovers on its own.
+    logged_in || { login_help; exit 1; }
+    servers=$(rc_servers)
+    while read -r pid name; do
+      [ -n "$pid" ] || continue
+      dir=$(lsof -a -p "$pid" -d cwd -Fn 2>/dev/null | sed -n 's/^n//p')
+      [ -d "$dir" ] || { echo "proj -R: cannot tell where '$name' runs; left alone" >&2; continue; }
+      stop_rc "$pid"
+      start_rc "$name" "$dir" "$(sess_name "$name")" && printf '  ↻ %s\n' "$name"
+    done <<< "$servers"
+    bring_up_residents
     exit 0 ;;
   -k|--kill)
     [ $# -ge 2 ] || { echo "usage: proj -k <name>" >&2; exit 2; }
@@ -232,14 +335,22 @@ SESS=$(sess_name "$NAME")
 # handled here and exits rather than falling through to `enter`.
 if [ "$AGENT" = claude ] && [ -z "${PROJ_NO_REMOTE_CONTROL:-}" ]; then
   [ "$FRESH" = new ] && echo "proj: 'new' has no meaning for a Remote Control server — the app creates the sessions." >&2
-  if rc_running "$NAME"; then
+  logged_in || { login_help; exit 1; }
+  if rc_running "$NAME" && ! rc_auth_failed "$NAME"; then
     printf "'%s' is already reachable from the Claude app.\n" "$NAME"
   else
+    # Running but locked out since a login lapsed: replace it, don't adopt it.
+    if pid=$(rc_pid "$NAME") && [ -n "$pid" ]; then
+      stop_rc "$pid"; printf "Replacing '%s', whose server had lost its login.\n" "$NAME"
+    fi
     start_rc "$NAME" "$DIR" "$SESS" || exit 1
     printf "Started Remote Control for '%s'.\n" "$NAME"
   fi
   if url=$(rc_url "$NAME"); then
     printf '  %s\n' "$url"
+  elif ! rc_running "$NAME"; then
+    printf '  The server exited — see %s, or the pane: tmux attach -t %s\n' "$(rc_log "$NAME")" "$SESS" >&2
+    exit 1
   else
     printf '  Registration has not shown up yet — check %s\n' "$(rc_log "$NAME")" >&2
   fi
