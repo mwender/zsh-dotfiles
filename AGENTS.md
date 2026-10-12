@@ -73,6 +73,9 @@ If repo contents or behavior conflict with the request, stop and surface the con
 - `.gitconfig`, `.vimrc`
   Personal editor and Git configuration also managed by this repo.
 
+- `.my.cnf`
+  MySQL client defaults (`[client]` only): `user=root` and `host=127.0.0.1`, so `mysqladmin create wp_name` works with no flags. The host forces TCP because the MacBook's server is DBngin's, on `/tmp/mysql_3306.sock` rather than the `/tmp/mysql.sock` the Homebrew client expects. **This repo is public — never add a password here**; that goes in `~/.mylogin.cnf` via `mysql_config_editor`.
+
 ## Boot / Load Order
 
 This matters whenever you change startup behavior:

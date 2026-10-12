@@ -12,6 +12,7 @@ Personal Zsh dotfiles for a clean, fast CLI experience. This repo includes a cus
 ├── .aliases                  # Shell aliases (navigation, ls defaults, shortcuts)
 ├── .functions                # Helper functions (mkd, shrinkpng, t, renamefiles)
 ├── .gitconfig                # Git aliases + user identity
+├── .my.cnf                   # MySQL client defaults (root over TCP; no password)
 ├── .vimrc                    # Vim defaults (Solarized, UX, backups, etc.)
 ├── .zprofile                 # Login shell config (ARM Homebrew init)
 ├── .zsh/                     # Zsh extras
