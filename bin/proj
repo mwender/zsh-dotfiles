@@ -30,10 +30,14 @@
 #
 #   hoperedefined.org   ~/webdev/bedrock/hoperedefined.org
 #
-# The name is what the server is called in the Claude app, and what `proj -r`
-# looks for to decide whether it is already up. Every other form honours that
-# path too, so `proj hoperedefined.org claude` works from anywhere -- but only
-# on the exact name, never a partial one.
+# The name is the server's identity -- what `proj -r` looks for to decide
+# whether it is already up. It is not what the Claude app lists: the app's
+# environment picker shows the git repository's name (orra.org appears as
+# orra-bedrock-site, Projects as projects-infra).
+#
+# Every form honours a resident line's path, not just -r, so `proj
+# hoperedefined.org claude` works from anywhere -- but only on the exact name,
+# never a partial one.
 #
 # Set PROJ_NO_REMOTE_CONTROL=1 to get the old behaviour instead: an ordinary
 # interactive Claude Code session in tmux, continuing this directory's last
