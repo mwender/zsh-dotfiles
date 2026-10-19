@@ -98,7 +98,7 @@ expand_home() { case "$1" in "~") printf '%s' "$HOME" ;; "~/"*) printf '%s/%s' "
 # -- tmux's wrapper, an ssh one-liner, a grep -- would otherwise count as up.
 rc_running() {
   local pid
-  for pid in $(pgrep -f -- "remote-control --name $1 " 2>/dev/null); do
+  for pid in $(pgrep -af -- "remote-control --name $1 " 2>/dev/null); do
     case "$(ps -p "$pid" -o comm= 2>/dev/null)" in claude|*/claude) return 0 ;; esac
   done
   return 1
@@ -222,8 +222,11 @@ do_login() {
 # failure, says whether it is still able to work.
 rc_auth_failed() { # rc_auth_failed <name>
   local last
-  last=$(grep -E 'Refreshing token for|Updated access token|Refresh chain exhausted|Authentication failed|must be logged in' \
-           "$(rc_log "$1")" 2>/dev/null | tail -1)
+  # [bridge:ws] and [bridge:activity] lines echo the conversation, which can
+  # quote these very phrases -- a session working on proj did -- so skip them.
+  last=$(grep -vF -e '[bridge:ws]' -e '[bridge:activity]' "$(rc_log "$1")" 2>/dev/null \
+           | grep -E 'Refreshing token for|Updated access token|Refresh chain exhausted|Authentication failed|must be logged in' \
+           | tail -1)
   case "$last" in *exhausted*|*"Authentication failed"*|*"must be logged in"*) return 0 ;; esac
   return 1
 }
@@ -231,7 +234,7 @@ rc_auth_failed() { # rc_auth_failed <name>
 # Every running server, one "<pid> <name>" per line.
 rc_servers() {
   local pid name
-  for pid in $(pgrep -f -- 'remote-control --name ' 2>/dev/null); do
+  for pid in $(pgrep -af -- 'remote-control --name ' 2>/dev/null); do
     case "$(ps -p "$pid" -o comm= 2>/dev/null)" in claude|*/claude) ;; *) continue ;; esac
     name=$(ps -p "$pid" -o args= | sed -n 's/.*remote-control --name \([^ ]*\).*/\1/p')
     [ -n "$name" ] && printf '%s %s\n' "$pid" "$name"
@@ -412,7 +415,30 @@ rc_mark() { # rc_mark <name>
   else                         printf 'remote control'; fi
 }
 
+# One line per server or resident project, tab-separated: <name> <state>
+# <resident 0|1>, where state is up, trust (waiting to be trusted), auth (lost
+# its login) or down. Quick, because it skips the login check -l makes, so the
+# `hello` splash can afford it.
+rc_status() {
+  local servers pid name state
+  servers=$(rc_servers)
+  while read -r pid name; do
+    [ -n "$name" ] || continue
+    if trust_pane "$name" >/dev/null; then state=trust
+    elif rc_auth_failed "$name"; then   state=auth
+    else                                state=up; fi
+    printf '%s\t%s\t%s\n' "$name" "$state" "$(is_resident "$name" && echo 1 || echo 0)"
+  done <<< "$servers"
+  resident_list | while read -r name _; do
+    printf '%s\n' "$servers" | awk -v n="$name" '$2 == n { f=1 } END { exit !f }' \
+      || printf '%s\tdown\t1\n' "$name"
+  done
+}
+
 case "${1:-}" in
+  --status)
+    rc_status
+    exit 0 ;;
   -l|--list)
     record_login
     [ "$(cat "$LOGIN_FILE" 2>/dev/null || echo 0)" -gt 0 ] || printf '\n  \033[31m! Not logged in to claude.ai — no server here can work. Run `pm login`.\033[0m\n\n'

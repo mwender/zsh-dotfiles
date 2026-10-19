@@ -1,161 +1,476 @@
 #!/usr/bin/env bash
 #
-# hello — the terminal splash. A reminder of the commands built for working
-# across the MacBook and the headless Mac Mini.
+# hello — the terminal splash. How this machine is doing, what the Mini is
+# serving, and a reminder of the commands built for working across the MacBook
+# and the headless Mac Mini.
 #
 # Runs automatically for a new interactive shell that is not inside tmux (see
 # .zshrc). Inside tmux it would fire on every pane, which is noise. Run it by
 # hand any time with `hello`.
 #
 #   hello           print the splash
-#   hello --no-art  skip the banner, just the commands
+#   hello --no-art  skip the header bar
+#   hello --plain   the single-column text version, without gum
 #
 # Set WENMARK_NO_SPLASH=1 to suppress the automatic one.
 #
+# Layout comes from gum (`brew install gum`): bordered panels set side by side
+# in as many columns as the terminal is wide enough for. Without gum, or when
+# not writing to a terminal, the same panels print one after another as plain
+# text, so a fresh machine never gets a broken splash.
+#
+# It runs on every new shell, so nothing slow happens in the foreground. Probes
+# that take longer than a few milliseconds -- macOS updates (~5 s), Homebrew
+# (~0.5 s), the Remote Control servers (~1 s), anything over SSH -- read a
+# cached answer and refresh it in the background when stale. The first shell
+# after a cache expires shows the previous answer; the next one is current.
+#
 set -uo pipefail
+shopt -s extglob
 
-ART=1
-[ "${1:-}" = "--no-art" ] && ART=0
+ART=1 PLAIN=0
+for a in "$@"; do
+  case "$a" in
+    --no-art) ART=0 ;;
+    --plain)  PLAIN=1 ;;
+  esac
+done
 
 # Colour only when we are actually writing to a terminal that can show it.
-if [ -t 1 ] && [ "${TERM:-dumb}" != "dumb" ]; then
+if [ -t 1 ] && [ "${TERM:-dumb}" != "dumb" ] || [ -n "${CLICOLOR_FORCE:-}" ]; then
   C_DIM=$'\033[38;5;245m'; C_KEY=$'\033[38;5;37m'   # cyan
   C_HDR=$'\033[38;5;33m'                             # blue
-  C_TXT=$'\033[0m';        C_WARN=$'\033[38;5;166m' # orange
-  C_OFF=$'\033[0m';        C_B=$'\033[1m'
+  C_WARN=$'\033[38;5;166m'                           # orange
+  C_OK=$'\033[38;5;71m'                              # green
   C_ERR=$'\033[38;5;160m'                            # red
+  C_OFF=$'\033[0m';        C_B=$'\033[1m'
 else
-  C_DIM=""; C_KEY=""; C_HDR=""; C_TXT=""; C_WARN=""; C_OFF=""; C_B=""; C_ERR=""
+  C_DIM=""; C_KEY=""; C_HDR=""; C_WARN=""; C_OK=""; C_ERR=""; C_OFF=""; C_B=""
 fi
 
 ROOT="${PROJECTS_DIR:-$HOME/Projects}"
 HOST_SHORT="$(hostname -s 2>/dev/null || echo unknown)"
 IS_MINI=0
 [ "$HOST_SHORT" = "${PM_LOCAL_HOSTNAME:-wenmark-macmini}" ] && IS_MINI=1
+MINI="${PM_HOST:-macmini@macs-mac-mini}"
+NOW=$(date +%s)
 
-count_projects() {
-  [ -d "$ROOT" ] || { echo 0; return; }
-  find "$ROOT" -mindepth 1 -maxdepth 1 -type d -exec test -d '{}/.git' ';' -print 2>/dev/null | wc -l | tr -d ' '
+# ---------------------------------------------------------------- caching ---
+
+CACHE_DIR="${XDG_CACHE_HOME:-$HOME/.cache}/wenmark"
+
+# cached <key> <max-age-seconds> <command>
+# Print the cached output of <command> and, if it is older than <max-age>,
+# refresh it in the background. A lock directory stops ten new terminals from
+# starting ten refreshes; a lock older than ten minutes is assumed dead.
+cached() {
+  local key="$1" max="$2" cmd="$3" file="$CACHE_DIR/$1" age=999999999 lock
+  [ -f "$file" ] && age=$(( NOW - $(stat -f %m "$file") ))
+  if [ "$age" -gt "$max" ]; then
+    mkdir -p "$CACHE_DIR"
+    lock="$file.lock"
+    [ -d "$lock" ] && [ $(( NOW - $(stat -f %m "$lock") )) -gt 600 ] && rmdir "$lock" 2>/dev/null
+    if mkdir "$lock" 2>/dev/null; then
+      ( out=$(bash -c "$cmd" 2>/dev/null) && printf '%s\n' "$out" > "$file.tmp" && mv "$file.tmp" "$file"
+        rmdir "$lock" ) >/dev/null 2>&1 &
+      disown 2>/dev/null
+    fi
+  fi
+  cat "$file" 2>/dev/null
 }
+
+# Run on the Mini over SSH, without ever prompting.
+on_mini() { printf "ssh -o BatchMode=yes -o ConnectTimeout=5 %q %q" "$MINI" "zsh -lc $(printf %q "$1")"; }
+
+# --------------------------------------------------------- panel building ---
+
+# Panels are built as plain lines first, wrapped to the panel's inner width by
+# us rather than by gum, so continuation lines can hang under the description
+# and the line count -- which the column balancing needs -- is known up front.
+
+TITLES=() BODIES=() CUR=-1
+IW=60   # inner text width, set by the layout before panels are built
+
+panel() { CUR=$(( CUR + 1 )); TITLES[$CUR]="$1"; BODIES[$CUR]=""; KW=${2:-20}; }
+add()   { BODIES[$CUR]="${BODIES[$CUR]}$1"$'\n'; }
+
+# Visible length, colour codes excluded. Sets VL rather than printing, because
+# wrap calls it once per word and a subshell each time is most of the cost.
+vis_len() { local s="${1//$'\033'\[*([0-9;])m/}"; VL=${#s}; }
+
+# wrap <width> <indent> <text> — word-wrap text that may contain colour codes.
+wrap() {
+  local width="$1" indent="$2" text="$3" line="" w len=0 wl pad
+  printf -v pad '%*s' "$indent" ''
+  for w in $text; do
+    vis_len "$w"; wl=$VL
+    if [ "$len" -gt 0 ] && [ $(( len + 1 + wl )) -gt "$width" ]; then
+      printf '%s\n' "$line"; line="$pad$w"; len=$(( indent + wl ))
+    elif [ "$len" -eq 0 ]; then
+      line="$line$w"; len=$(( len + wl ))
+    else
+      line="$line $w"; len=$(( len + 1 + wl ))
+    fi
+  done
+  [ -n "$line" ] && printf '%s\n' "$line"
+}
+
+KW=20   # command column
+
+row() { # row <command> <description>
+  local cmd="$1" desc="$2" ind first="" l
+  printf -v ind '%*s' $(( KW + 1 )) ''
+  if [ "${#cmd}" -ge "$KW" ]; then   # too long for the column: its own line
+    add "${C_KEY}$cmd${C_OFF}"; first=1
+  fi
+  while IFS= read -r l; do
+    if [ -z "$first" ]; then add "${C_KEY}$(printf '%-*s' "$KW" "$cmd")${C_OFF} $l"; first=1
+    else add "$ind$l"; fi
+  done < <(wrap "$(( IW - KW - 1 ))" 0 "$desc")
+}
+
+note() { while IFS= read -r l; do add "$l"; done < <(wrap "$IW" 0 "$1"); }
+sub()  { add ""; add "${C_DIM}$1${C_OFF}"; }
+
+# metric <dot-colour> <label> <value> — one line of the machine panel.
+metric() { add "$1●${C_OFF} $(printf '%-9s' "$2")$3"; }
+
+# bar <percent-used> <width> <colour>
+bar() {
+  local used="$1" width="$2" col="$3" n full empty
+  n=$(( used * width / 100 )); [ "$n" -gt "$width" ] && n=$width
+  printf -v full '%*s' "$n" ''; printf -v empty '%*s' $(( width - n )) ''
+  printf '%s%s%s%s%s' "$col" "${full// /━}" "${C_DIM}" "${empty// /─}" "${C_OFF}"
+}
+
+level() { # level <value> <warn> <bad> — colour for a higher-is-worse value
+  if [ "$1" -ge "$3" ]; then printf '%s' "${C_ERR}"
+  elif [ "$1" -ge "$2" ]; then printf '%s' "${C_WARN}"
+  else printf '%s' "${C_OK}"; fi
+}
+
+ALERTS=()
+alert() { ALERTS[${#ALERTS[@]}]="$1"; }
+
+# ------------------------------------------------------------- the machine ---
+
+human_dur() { # seconds -> "18d 4h" / "5h 12m" / "40m"
+  local s="$1" d h m
+  d=$(( s / 86400 )); h=$(( s % 86400 / 3600 )); m=$(( s % 3600 / 60 ))
+  if [ "$d" -gt 0 ]; then printf '%dd %dh' "$d" "$h"
+  elif [ "$h" -gt 0 ]; then printf '%dh %dm' "$h" "$m"
+  else printf '%dm' "$m"; fi
+}
+
+machine_panel() {
+  local model os sys boot memfree ncpu load memgb dkb used avail pct col \
+        batt src bpct bstate swap updates n brew
+
+  # Model and macOS version change only on hardware or an OS update: a day.
+  model=$(cached model 86400 "system_profiler SPHardwareDataType -detailLevel mini | sed -n 's/^ *Model Name: //p; s/^ *Chip: //p' | paste -sd'·' - | sed 's/·/ · /'")
+  os=$(sw_vers -productVersion 2>/dev/null)
+
+  # One sysctl for everything it can answer: boot time, free memory %, load,
+  # cores, RAM, swap.
+  sys=$(/usr/sbin/sysctl -n kern.boottime kern.memorystatus_level vm.loadavg hw.ncpu hw.memsize vm.swapusage 2>/dev/null)
+  { read -r _ _ _ boot _; read -r memfree; read -r _ load _; read -r ncpu; read -r memgb
+    read -r _ _ _ _ _ swap _; } <<< "$sys"
+  boot=${boot%,}; memgb=$(( ${memgb:-0} / 1073741824 ))
+  case "$swap" in 0.00M|'') swap="" ;; esac
+
+  panel "THIS MAC · $HOST_SHORT"
+  add "${C_DIM}${model:-Mac} · ${memgb} GB · macOS $os${C_OFF}"
+  add ""
+
+  # Disk: the Data volume is where everything lives on APFS.
+  read -r dkb used avail <<< "$(df -k /System/Volumes/Data 2>/dev/null | awk 'NR==2 { print $2, $3, $4 }')"
+  if [ -n "${dkb:-}" ]; then
+    pct=$(( (dkb - avail) * 100 / dkb ))
+    col=$(level "$pct" 80 90)
+    metric "$col" "Disk" "$(bar "$pct" 12 "$col") ${pct}%  $(( avail / 1048576 )) GB free"
+    [ "$pct" -ge 90 ] && alert "${C_ERR}Disk is ${pct}% full on $HOST_SHORT${C_OFF} — $(( avail / 1048576 )) GB left."
+  fi
+
+  if [ -n "$memfree" ]; then
+    pct=$(( 100 - memfree ))
+    col=$(level "$pct" 80 90)
+    metric "$col" "Memory" "$(bar "$pct" 12 "$col") ${pct}%  ${swap:+swap $swap}"
+  fi
+
+  if [ -n "$load" ] && [ -n "$ncpu" ]; then
+    pct=$(awk -v l="$load" -v n="$ncpu" 'BEGIN { printf "%d", l * 100 / n }')
+    metric "$(level "$pct" 70 100)" "Load" "$load on $ncpu cores"
+  fi
+
+  [ -n "$boot" ] && metric "${C_OK}" "Up" "$(human_dur $(( NOW - boot )))"
+
+  # Power: the MacBook's battery, or the Mini's UPS -- pmset reports both.
+  batt=$(pmset -g batt 2>/dev/null)
+  src=$(printf '%s\n' "$batt" | sed -n "1s/.*'\(.*\)'.*/\1/p")
+  bpct=$(printf '%s\n' "$batt" | grep -o '[0-9]*%' | head -1 | tr -d %)
+  bstate=$(printf '%s\n' "$batt" | sed -n '2s/.*%; \([^;]*\);.*/\1/p')
+  if printf '%s' "$batt" | grep -q InternalBattery; then
+    col=${C_OK}; [ "${bpct:-100}" -le 20 ] && col=${C_WARN}
+    metric "$col" "Battery" "${bpct}% · $bstate"
+  elif [ -n "$bpct" ]; then
+    if [ "$src" = "AC Power" ]; then metric "${C_OK}" "UPS" "${bpct}% · mains power"
+    else
+      metric "${C_ERR}" "UPS" "${bpct}% · ${C_ERR}on battery${C_OFF}"
+      alert "${C_ERR}The Mini is running on its UPS battery (${bpct}%)${C_OFF} — mains power is out."
+    fi
+  else
+    metric "${C_OK}" "Power" "${src:-AC}"
+  fi
+
+  # Thermal: pmset says "No ... recorded" until there is something to report.
+  if pmset -g therm 2>/dev/null | grep -q 'level *='; then
+    metric "${C_WARN}" "Thermal" "throttling recorded — pmset -g therm"
+  fi
+
+  add ""
+  # macOS: once a day. Lines like "Title: macOS Tahoe 26.7.1, Version: ...".
+  updates=$(cached softwareupdate 86400 "softwareupdate -l 2>&1 | sed -n 's/^.*Title: \([^,]*\),.*/\1/p'")
+  if [ -z "$updates" ] && [ ! -f "$CACHE_DIR/softwareupdate" ]; then
+    metric "${C_DIM}" "macOS" "${C_DIM}checking for updates…${C_OFF}"
+  elif [ -z "$updates" ]; then
+    metric "${C_OK}" "macOS" "up to date"
+  else
+    n=$(printf '%s\n' "$updates" | grep -c .)
+    metric "${C_WARN}" "macOS" "$n update$([ "$n" -gt 1 ] && echo s) available"
+    while IFS= read -r l; do add "           ${C_DIM}$l${C_OFF}"; done < <(printf '%s\n' "$updates" | head -4)
+  fi
+
+  # Homebrew: every six hours, without letting it update itself first.
+  brew=$(cached brew-outdated 21600 "HOMEBREW_NO_AUTO_UPDATE=1 brew outdated --quiet | wc -l | tr -d ' '")
+  if [ -z "$brew" ]; then metric "${C_DIM}" "Homebrew" "${C_DIM}checking…${C_OFF}"
+  elif [ "$brew" -eq 0 ]; then metric "${C_OK}" "Homebrew" "up to date"
+  else metric "${C_WARN}" "Homebrew" "$brew outdated · ${C_KEY}brew upgrade${C_OFF}"; fi
+}
+
+# ------------------------------------------------ the Mini's login + servers ---
 
 # The Mini's claude.ai login lapses about monthly, and every Remote Control
 # server stops working when it does. proj writes the expiry to a file on the
 # Mini whenever it checks (every half hour, via the resident LaunchAgent). The
-# Mini reads that file; the MacBook reads a copy, refreshed in the background
-# at most every six hours, so a new shell never waits on SSH -- the warning can
-# be a few hours stale, which a seven-day lead absorbs.
+# Mini reads that file; the MacBook reads a copy over SSH, refreshed at most
+# every six hours -- the warning can be a few hours stale, which a seven-day
+# lead absorbs.
 LOGIN_FILE="${XDG_STATE_HOME:-$HOME/.local/state}/proj/login-expires"
-LOGIN_CACHE="${XDG_CACHE_HOME:-$HOME/.cache}/wenmark/mini-login-expires"
 LOGIN_WARN_DAYS=7
 
-mini_login_expiry() {
-  if [ "$IS_MINI" = 1 ]; then cat "$LOGIN_FILE" 2>/dev/null; return; fi
-  local age=999999
-  [ -f "$LOGIN_CACHE" ] && age=$(( $(date +%s) - $(stat -f %m "$LOGIN_CACHE") ))
-  if [ "$age" -gt 21600 ]; then
-    mkdir -p "$(dirname "$LOGIN_CACHE")"
-    ( v=$(ssh -o BatchMode=yes -o ConnectTimeout=5 "${PM_HOST:-macmini@macs-mac-mini}" \
-            'cat ~/.local/state/proj/login-expires' 2>/dev/null) \
-        && [ -n "$v" ] && printf '%s\n' "$v" > "$LOGIN_CACHE" ) >/dev/null 2>&1 &
-    disown 2>/dev/null
-  fi
-  cat "$LOGIN_CACHE" 2>/dev/null
-}
-
-login_warning() {
-  local exp days fix="pm login"
-  exp=$(mini_login_expiry)
+login_check() {
+  local exp days fix="pm login" when
+  if [ "$IS_MINI" = 1 ]; then exp=$(cat "$LOGIN_FILE" 2>/dev/null)
+  else exp=$(cached mini-login-expires 21600 "$(on_mini 'cat ~/.local/state/proj/login-expires')"); fi
   case "$exp" in ''|*[!0-9]*) return ;; esac   # nothing known yet: say nothing
   [ "$IS_MINI" = 1 ] && fix="proj login"
-  if [ "$exp" -eq 0 ] || [ "$exp" -le "$(date +%s)" ]; then
-    printf '  %s%s! The Mini'"'"'s Claude login has lapsed — Remote Control is down.%s\n' "$C_B" "$C_ERR" "$C_OFF"
-    printf '    Run %s%s%s to renew it and restart the servers.\n\n' "$C_KEY" "$fix" "$C_OFF"
+  if [ "$exp" -eq 0 ] || [ "$exp" -le "$NOW" ]; then
+    alert "${C_B}${C_ERR}The Mini's Claude login has lapsed — Remote Control is down.${C_OFF} Run ${C_KEY}$fix${C_OFF} to renew it and restart the servers."
+    LOGIN_LINE="${C_ERR}●${C_OFF} Login   ${C_ERR}lapsed${C_OFF} · ${C_KEY}$fix${C_OFF}"
     return
   fi
-  days=$(( (exp - $(date +%s)) / 86400 ))
-  [ "$days" -lt "$LOGIN_WARN_DAYS" ] || return 0
-  printf '  %s! The Mini'"'"'s Claude login lapses in %s (%s).%s\n' "$C_WARN" \
-    "$( [ "$days" -eq 0 ] && echo "under a day" || { [ "$days" -eq 1 ] && echo "1 day" || echo "$days days"; } )" \
-    "$(date -r "$exp" '+%a %b %-d')" "$C_OFF"
-  printf '    Run %s%s%s any time before then — it takes a minute.\n\n' "$C_KEY" "$fix" "$C_OFF"
+  days=$(( (exp - NOW) / 86400 ))
+  when=$(date -r "$exp" '+%b %-d')
+  if [ "$days" -lt "$LOGIN_WARN_DAYS" ]; then
+    alert "${C_WARN}The Mini's Claude login lapses in $( [ "$days" -eq 0 ] && echo "under a day" || { [ "$days" -eq 1 ] && echo "1 day" || echo "$days days"; } ) ($when).${C_OFF} Run ${C_KEY}$fix${C_OFF} any time before then — it takes a minute."
+    LOGIN_LINE="${C_WARN}●${C_OFF} Login   renew by $when · ${C_KEY}$fix${C_OFF}"
+  else
+    LOGIN_LINE="${C_OK}●${C_OFF} Login   good until $when"
+  fi
 }
 
-rule() { # rule <label>
-  local label="$1" pad
-  pad=$(printf '%*s' $(( 54 - ${#label} )) '')
-  printf '  %s%s%s %s%s%s\n' "$C_HDR" "$label" "$C_OFF" "$C_DIM" "${pad// /─}" "$C_OFF"
+servers_panel() {
+  local st name state res mark cmd up=0 total=0 lines="" fix
+  # A minute on the Mini, where it is local; five from the MacBook, over SSH.
+  if [ "$IS_MINI" = 1 ]; then
+    st=$(cached rc-status 60 "$HOME/bin/proj --status"); cmd=proj
+  else
+    st=$(cached mini-rc-status 300 "$(on_mini 'proj --status')"); cmd=pm
+  fi
+
+  panel "REMOTE CONTROL · the Mini"
+  [ -n "${LOGIN_LINE:-}" ] && { add "$LOGIN_LINE"; add ""; }
+  if [ -z "$st" ]; then add "${C_DIM}checking the servers…${C_OFF}"; return; fi
+
+  # Problems first, then the healthy ones, resident ones marked.
+  while IFS=$'\t' read -r name state res; do
+    [ -n "$name" ] || continue
+    total=$(( total + 1 ))
+    mark=""; [ "$res" = 1 ] && mark=" ${C_DIM}·r${C_OFF}"
+    case "$state" in
+      up)    up=$(( up + 1 )); lines="$lines${C_OK}●${C_OFF} $name$mark"$'\n' ;;
+      trust) add "${C_WARN}●${C_OFF} $name$mark ${C_WARN}not trusted yet${C_OFF}"
+             add "    ${C_KEY}$cmd $name claude${C_OFF} to answer"
+             alert "${C_WARN}$name is waiting to be trusted${C_OFF} — run ${C_KEY}$cmd $name claude${C_OFF} to answer." ;;
+      auth)  add "${C_ERR}●${C_OFF} $name$mark ${C_ERR}lost its login${C_OFF}" ;;
+      down)  add "${C_ERR}●${C_OFF} $name$mark ${C_ERR}down${C_OFF} · back within 30 min" ;;
+    esac
+  done <<< "$st"
+  while IFS= read -r l; do [ -n "$l" ] && add "$l"; done <<< "$lines"
+  add ""
+  add "${C_DIM}$up of $total serving · ·r = resident${C_OFF}"
 }
 
-row() { # row <command> <description>
-  printf '    %s%-22s%s %s\n' "$C_KEY" "$1" "$C_OFF" "$2"
+# ----------------------------------------------------------- the reference ---
+
+commands_panel() {
+  if [ "$IS_MINI" = 1 ]; then
+    panel "RESIDENT PROJECTS"
+    row "proj"                "fuzzy-pick a project and open its session"
+    row "proj <name> claude"  "serve it to the Claude app (sessions start there)"
+    row "proj <name> codex"   "Codex in a terminal (always starts fresh)"
+    row "proj -l"             "what exists, ${C_KEY}*${C_OFF} marks a live session"
+    row "proj -k <name>"      "stop it (exact name) — resident ones come back"
+    row "proj login"          "renew the claude.ai login (~monthly)"
+  else
+    panel "LIVES ON THE MINI — reachable from the Claude app"
+    row "pm <name> claude"    "serve it to the Claude app (sessions start there)"
+    row "pm"                  "fuzzy-pick instead of naming it"
+    row "pm -l"               "what exists, ${C_KEY}*${C_OFF} marks a live session"
+    row "pm -k <name>"        "stop it (exact name) — resident ones come back"
+    row "pm -s"               "plain shell on the Mini, no tmux"
+    row "pm login"            "renew the Mini's claude.ai login (~monthly)"
+    sub "HERE, NOW — ends with this terminal"
+    row "lpd"                 "launchpad TUI — descriptions, last opened"
+  fi
 }
 
-note() {
-  printf '    %s\n' "$1"
+tmux_panel() {
+  panel "INSIDE A TMUX SESSION" 12
+  row "C-b  d"      "detach — everything keeps running"
+  row "C-b  n / p"  "next / previous window"
+  row "C-b  w"      "pick a window from a list"
+  row "C-b  ["      "scroll back through output (q quits)"
 }
 
-if [ "$ART" = 1 ]; then
-  printf '\n'
-  printf '   %s╭──────────────╮%s   %s%sWENMARK%s %s· PROJECTS%s\n' \
-    "$C_DIM" "$C_OFF" "$C_B" "$C_HDR" "$C_OFF" "$C_DIM" "$C_OFF"
-  printf '   %s│%s %s$ _%s          %s│%s   %s%s · %s projects%s\n' \
-    "$C_DIM" "$C_OFF" "$C_KEY" "$C_OFF" "$C_DIM" "$C_OFF" \
-    "$C_DIM" "$HOST_SHORT" "$(count_projects)" "$C_OFF"
-  printf '   %s╰──────────────╯%s\n' "$C_DIM" "$C_OFF"
-fi
-printf '\n'
-login_warning
+sync_panel() {
+  panel "STAYING IN SYNC" 14
+  note "${C_WARN}GitHub is the source of truth, not Dropbox.${C_OFF}"
+  note "Commit and push before switching machines — nothing warns you."
+  if [ "$IS_MINI" = 1 ]; then
+    # sync-secrets pushes from the MacBook to here; running it on the Mini
+    # would mean syncing the machine to itself.
+    note "${C_DIM}.env files arrive via sync-secrets, run from the MacBook.${C_OFF}"
+  else
+    add ""
+    row "sync-secrets" "copy .env files to the Mini (they never mirror)"
+  fi
+}
 
-if [ "$IS_MINI" = 1 ]; then
-  rule "RESIDENT PROJECTS"
-  row "proj"                "fuzzy-pick a project and open its session"
-  row "proj <name> claude"  "serve it to the Claude app (sessions start there)"
-  row "proj <name> codex"   "Codex in a terminal (always starts fresh)"
-  row "proj -l"             "what exists, ${C_KEY}*${C_OFF} marks a live session"
-  row "proj -k <name>"      "stop it (exact name) — resident ones come back"
-  row "proj login"          "renew the claude.ai login (~monthly)"
-else
-  rule "LIVES ON THE MINI — reachable from the Claude app"
-  row "pm <name> claude"    "serve it to the Claude app (sessions start there)"
-  row "pm"                  "fuzzy-pick instead of naming it"
-  row "pm -l"               "what exists, ${C_KEY}*${C_OFF} marks a live session"
-  row "pm -k <name>"        "stop it (exact name) — resident ones come back"
-  row "pm -s"               "plain shell on the Mini, no tmux"
-  row "pm login"            "renew the Mini's claude.ai login (~monthly)"
-  printf '\n'
-  rule "HERE, NOW — ends with this terminal"
-  row "lpd"                 "launchpad TUI — descriptions, last opened"
-fi
-
-printf '\n'
-rule "INSIDE A TMUX SESSION"
-row "C-b  d"      "detach — everything keeps running"
-row "C-b  n / p"  "next / previous window"
-row "C-b  w"      "pick a window from a list"
-row "C-b  ["      "scroll back through output (q quits)"
-
-printf '\n'
-rule "STAYING IN SYNC"
-note "${C_WARN}GitHub is the source of truth, not Dropbox.${C_OFF}"
-note "Commit and push before switching machines — nothing warns you."
-if [ "$IS_MINI" = 1 ]; then
-  # sync-secrets pushes from the MacBook to here; running it on the Mini would
-  # mean syncing the machine to itself.
-  note "${C_DIM}.env files arrive via sync-secrets, run from the MacBook.${C_OFF}"
-else
-  row "sync-secrets" "copy .env files to the Mini (they never mirror)"
-fi
-
-if [ "$IS_MINI" != 1 ]; then
-  printf '\n'
-  rule "WORTH REMEMBERING"
+remember_panel() {
+  [ "$IS_MINI" = 1 ] && return
+  panel "WORTH REMEMBERING"
   note "A live agent costs ~1.2 GB; the Mini has 16 GB."
-  note "Resident projects restart within 30 min of ${C_KEY}pm -k${C_OFF} unless taken off"
-  note "${C_KEY}~/.config/proj/resident${C_OFF} on the Mini."
+  note "Resident projects restart within 30 min of ${C_KEY}pm -k${C_OFF} unless taken off ${C_KEY}~/.config/proj/resident${C_OFF} on the Mini."
   note "Let Claude exit when done — ${C_KEY}claude -c${C_OFF} resumes it from disk for free."
+}
+
+# -------------------------------------------------------------- the layout ---
+
+COLS=${HELLO_COLS:-$(tput cols 2>/dev/null || echo 80)}
+[ "${COLS:-0}" -gt 0 ] 2>/dev/null || COLS=80
+command -v gum >/dev/null 2>&1 || PLAIN=1
+[ -t 1 ] || [ -n "${CLICOLOR_FORCE:-}" ] || PLAIN=1
+
+if   [ "$PLAIN" = 1 ];   then NCOL=1
+elif [ "$COLS" -ge 200 ]; then NCOL=4
+elif [ "$COLS" -ge 150 ]; then NCOL=3
+elif [ "$COLS" -ge 100 ]; then NCOL=2
+else                           NCOL=1; fi
+
+MARGIN=1 GAP=1
+CW=$(( (COLS - MARGIN * 2 - GAP * (NCOL - 1)) / NCOL ))
+[ "$CW" -gt 90 ] && CW=90
+IW=$(( CW - 4 ))                       # border and one space of padding a side
+[ "$PLAIN" = 1 ] && IW=$(( COLS > 80 ? 76 : COLS - 4 ))
+
+login_check
+machine_panel
+servers_panel
+commands_panel
+tmux_panel
+sync_panel
+remember_panel
+
+count_projects() {
+  local g=( "$ROOT"/*/.git )
+  [ -e "${g[0]}" ] && printf '%s' "${#g[@]}" || printf 0
+}
+
+# The header: a full-width bar, name on the left, where you are on the right.
+header() {
+  local left right gap
+  left="${C_B}${C_HDR}WENMARK${C_OFF} ${C_DIM}· PROJECTS${C_OFF}"
+  right="${C_DIM}$HOST_SHORT · $(count_projects) projects · $(date '+%a %b %-d, %-I:%M %p')${C_OFF}"
+  if [ "$PLAIN" = 1 ]; then printf '\n  %s   %s\n' "$left" "$right"; return; fi
+  vis_len "$left"; gap=$VL; vis_len "$right"
+  gap=$(( NCOL * CW + GAP * (NCOL - 1) - 4 - gap - VL ))
+  [ "$gap" -lt 2 ] && gap=2
+  printf '\n'
+  gum style --border rounded --border-foreground 33 --padding "0 1" --margin "0 $MARGIN" \
+    --width $(( NCOL * CW + GAP * (NCOL - 1) )) "$left$(printf '%*s' "$gap" '')$right"
+}
+
+print_alerts() {
+  local a
+  [ "${#ALERTS[@]}" -gt 0 ] || return 0
+  for a in "${ALERTS[@]}"; do
+    while IFS= read -r l; do printf '%*s%s\n' "$(( MARGIN + 1 ))" '' "$l"; done \
+      < <(wrap $(( NCOL * CW + GAP * (NCOL - 1) - 4 )) 2 "${C_B}!${C_OFF} $a")
+  done
+}
+
+[ "$ART" = 1 ] && header
+printf '\n'
+print_alerts && [ "${#ALERTS[@]}" -gt 0 ] && printf '\n'
+
+if [ "$PLAIN" = 1 ]; then
+  rule() { local pad; pad=$(printf '%*s' $(( 54 - ${#1} > 2 ? 54 - ${#1} : 2 )) ''); printf '  %s%s%s %s%s%s\n' "${C_HDR}" "$1" "${C_OFF}" "${C_DIM}" "${pad// /─}" "${C_OFF}"; }
+  for i in "${!TITLES[@]}"; do
+    rule "${TITLES[$i]}"
+    while IFS= read -r l; do printf '    %s\n' "$l"; done <<< "${BODIES[$i]%$'\n'}"
+    printf '\n'
+  done
+else
+  # Deal panels into columns, each to whichever column is shortest so far, then
+  # stretch the last panel of each column so the columns end level.
+  heights=() colof=() lastof=()
+  for (( c = 0; c < NCOL; c++ )); do heights[$c]=0; lastof[$c]=-1; done
+  for i in "${!TITLES[@]}"; do
+    n=$(( $(printf '%s' "${BODIES[$i]}" | grep -c '') + 3 ))   # + title + border
+    best=0
+    for (( c = 1; c < NCOL; c++ )); do [ "${heights[$c]}" -lt "${heights[$best]}" ] && best=$c; done
+    colof[$i]=$best; heights[$best]=$(( heights[best] + n )); lastof[$best]=$i
+    ph[$i]=$n
+  done
+  tallest=0
+  for (( c = 0; c < NCOL; c++ )); do [ "${heights[$c]}" -gt "$tallest" ] && tallest=${heights[$c]}; done
+
+  # Each gum call is a ~20 ms process start, so draw the boxes in parallel.
+  tmp=$(mktemp -d "${TMPDIR:-/tmp}/hello.XXXXXX")
+  for i in "${!TITLES[@]}"; do
+    c=${colof[$i]}; h=${ph[$i]}
+    [ "${lastof[$c]}" = "$i" ] && h=$(( h + tallest - heights[c] ))
+    gum style --border rounded --border-foreground 240 --padding "0 1" \
+      --width "$CW" --height "$h" \
+      "${C_B}${C_HDR}${TITLES[$i]}${C_OFF}"$'\n'"${BODIES[$i]%$'\n'}" > "$tmp/$i" &
+  done
+  wait
+  colstr=()
+  for i in "${!TITLES[@]}"; do
+    c=${colof[$i]}
+    colstr[$c]="${colstr[$c]:+${colstr[$c]}$'\n'}$(cat "$tmp/$i")"
+  done
+  rm -rf "$tmp"
+
+  args=()
+  for (( c = 0; c < NCOL; c++ )); do
+    args[${#args[@]}]="${colstr[$c]}"
+    [ "$c" -lt $(( NCOL - 1 )) ] && args[${#args[@]}]=" "
+  done
+  gum join --horizontal --align top "${args[@]}" | sed "s/^/$(printf '%*s' "$MARGIN" '')/"
+  printf '\n'
 fi
 
-printf '\n'
-printf '    %shello%s to show this again · %shello --no-art%s for just the list\n' \
-  "$C_DIM" "$C_OFF" "$C_DIM" "$C_OFF"
-printf '\n'
+printf '  %shello%s to show this again · %shello --plain%s for the text version\n\n' \
+  "${C_DIM}" "${C_OFF}" "${C_DIM}" "${C_OFF}"

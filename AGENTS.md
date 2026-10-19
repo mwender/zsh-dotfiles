@@ -38,6 +38,7 @@ If repo contents or behavior conflict with the request, stop and surface the con
   Executables. **Symlinked** into `~/bin` per file by `install.sh`, not copied — see the installer note below.
   - `bin/proj` — one tmux session per project, named after the directory, optionally starting Claude Code or Codex in it. Reads `PROJECTS_DIR`. Requires `tmux`; the bare `proj` picker also requires `fzf`.
   - `bin/pm` — the same commands run against the headless Mac Mini over Tailscale, so they work from any network. On the Mini itself it `exec`s `proj`, detected by comparing `hostname -s` against `PM_LOCAL_HOSTNAME` (default `wenmark-macmini`). Target host is `PM_HOST` (default `macmini@macs-mac-mini`).
+  - `bin/hello` — the splash a new non-tmux shell prints: this machine's health (disk, memory, load, power/UPS, macOS and Homebrew updates), the Mini's Remote Control servers and login, and the command reference. Panels are laid out side by side by `gum` (`brew install gum`), one to four columns by terminal width; without `gum`, or when not on a terminal, it prints the same panels as plain text (`hello --plain` forces that). It runs on every shell, so anything slower than a few milliseconds is read from `~/.cache/wenmark/` and refreshed in the background when stale: macOS updates daily, Homebrew six-hourly, server status every minute on the Mini and five minutes over SSH from the MacBook. Keep it under ~0.2 s.
 
 - `.zshrc`
   Interactive-shell entrypoint. It returns immediately for non-interactive shells, configures completion, enables `bashcompinit`, and sources the main dotfiles.
@@ -105,6 +106,7 @@ Important detail: `.zsh_prompt` also defines `precmd()`. If you change prompt ho
 - `.aliases` and `.functions` may intentionally reference directories or hosts that only exist on the user's machine.
 - `.zsh/completions/_sshconn` depends on `$HOME/.connections`, which is not stored in this repo.
 - `bin/proj` needs `tmux`, and `fzf` for the bare picker. Neither is installed on the MacBook, where `pm` is the intended entry point — `proj` there exits with a clear message rather than failing obscurely.
+- `bin/hello` wants `gum` for its column layout and falls back to plain text without it. On the MacBook its server panel reads `proj --status` over SSH, so the Mini's `proj` must have that flag.
 - `bin/pm` assumes Tailscale is up on both machines and that SSH key auth works. It does not fall back to the LAN address, deliberately: the tailnet name survives the Mini's DHCP lease changing.
 
 ## Editing Guidance
