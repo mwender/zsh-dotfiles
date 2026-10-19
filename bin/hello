@@ -89,7 +89,7 @@ on_mini() { printf "ssh -o BatchMode=yes -o ConnectTimeout=5 %q %q" "$MINI" "zsh
 # and the line count -- which the column balancing needs -- is known up front.
 
 TITLES=() BODIES=() CUR=-1
-IW=60   # inner text width, set by the layout before panels are built
+IW=60   # inner text width, set by the layout before each panel is built
 
 panel() { CUR=$(( CUR + 1 )); TITLES[$CUR]="$1"; BODIES[$CUR]=""; KW=${2:-20}; }
 add()   { BODIES[$CUR]="${BODIES[$CUR]}$1"$'\n'; }
@@ -372,25 +372,57 @@ COLS=${HELLO_COLS:-$(tput cols 2>/dev/null || echo 80)}
 command -v gum >/dev/null 2>&1 || PLAIN=1
 [ -t 1 ] || [ -n "${CLICOLOR_FORCE:-}" ] || PLAIN=1
 
-if   [ "$PLAIN" = 1 ];   then NCOL=1
-elif [ "$COLS" -ge 200 ]; then NCOL=4
-elif [ "$COLS" -ge 150 ]; then NCOL=3
-elif [ "$COLS" -ge 100 ]; then NCOL=2
-else                           NCOL=1; fi
+# gum strips colour when its output is not a terminal -- and the boxes are
+# drawn into temporary files, below. Once we have decided colour is on, say so.
+[ -n "$C_OFF" ] && export CLICOLOR_FORCE=1
 
 MARGIN=1 GAP=1
-CW=$(( (COLS - MARGIN * 2 - GAP * (NCOL - 1)) / NCOL ))
-[ "$CW" -gt 90 ] && CW=90
-IW=$(( CW - 4 ))                       # border and one space of padding a side
-[ "$PLAIN" = 1 ] && IW=$(( COLS > 80 ? 76 : COLS - 4 ))
+FULL=$(( COLS - MARGIN * 2 ))
 
+# Rows of columns of panels: rows one per line, columns split by "|", panels
+# stacked in a column split by ",". M machine, S servers, Y sync, C commands,
+# T tmux, R worth remembering (MacBook only).
+if [ "$PLAIN" = 1 ] || [ "$COLS" -lt 100 ]; then
+  LAYOUT=$'M\nS\nC\nT\nY\nR'
+elif [ "$COLS" -lt 140 ]; then
+  LAYOUT=$'M|S\nC|Y,T,R'
+else
+  LAYOUT=$'M|S\nY,R|C|T'
+fi
+
+build() { # build <letter> — run that panel's builder at the current IW
+  case "$1" in
+    M) machine_panel ;;  S) servers_panel ;;  C) commands_panel ;;
+    T) tmux_panel ;;     Y) sync_panel ;;     R) remember_panel ;;
+  esac
+}
+
+lines_of() { local b="${BODIES[$1]}" n=0; while [ -n "$b" ]; do b=${b#*$'\n'}; n=$(( n + 1 )); done; LN=$n; }
+
+# Build every panel at the width its column will have, remembering where each
+# one goes: PROW/PCOL/PW per panel.
 login_check
-machine_panel
-servers_panel
-commands_panel
-tmux_panel
-sync_panel
-remember_panel
+PROW=() PCOL=() PW=() ROWCOLS=()
+r=0
+while IFS= read -r spec; do
+  IFS='|' read -r -a cols <<< "$spec"
+  n=${#cols[@]}; ROWCOLS[$r]=$n
+  for (( c = 0; c < n; c++ )); do
+    w=$(( (FULL - GAP * (n - 1)) / n ))
+    # The last column takes the remainder, so every row is exactly FULL wide.
+    [ "$c" -eq $(( n - 1 )) ] && w=$(( FULL - GAP * (n - 1) - w * (n - 1) ))
+    [ "$PLAIN" = 1 ] && w=$(( COLS > 80 ? 80 : COLS ))
+    IW=$(( w - 4 ))                        # border and one space of padding a side
+    IFS=',' read -r -a stack <<< "${cols[$c]}"
+    for letter in "${stack[@]}"; do
+      before=$CUR
+      build "$letter"
+      [ "$CUR" -gt "$before" ] && { PROW[$CUR]=$r; PCOL[$CUR]=$c; PW[$CUR]=$w; }
+    done
+  done
+  r=$(( r + 1 ))
+done <<< "$LAYOUT"
+NROWS=$r
 
 count_projects() {
   local g=( "$ROOT"/*/.git )
@@ -404,11 +436,11 @@ header() {
   right="${C_DIM}$HOST_SHORT · $(count_projects) projects · $(date '+%a %b %-d, %-I:%M %p')${C_OFF}"
   if [ "$PLAIN" = 1 ]; then printf '\n  %s   %s\n' "$left" "$right"; return; fi
   vis_len "$left"; gap=$VL; vis_len "$right"
-  gap=$(( NCOL * CW + GAP * (NCOL - 1) - 4 - gap - VL ))
+  gap=$(( FULL - 4 - gap - VL ))
   [ "$gap" -lt 2 ] && gap=2
   printf '\n'
   gum style --border rounded --border-foreground 33 --padding "0 1" --margin "0 $MARGIN" \
-    --width $(( NCOL * CW + GAP * (NCOL - 1) )) "$left$(printf '%*s' "$gap" '')$right"
+    --width "$FULL" "$left$(printf '%*s' "$gap" '')$right"
 }
 
 print_alerts() {
@@ -416,7 +448,7 @@ print_alerts() {
   [ "${#ALERTS[@]}" -gt 0 ] || return 0
   for a in "${ALERTS[@]}"; do
     while IFS= read -r l; do printf '%*s%s\n' "$(( MARGIN + 1 ))" '' "$l"; done \
-      < <(wrap $(( NCOL * CW + GAP * (NCOL - 1) - 4 )) 2 "${C_B}!${C_OFF} $a")
+      < <(wrap $(( FULL - 4 )) 2 "${C_B}!${C_OFF} $a")
   done
 }
 
@@ -432,43 +464,44 @@ if [ "$PLAIN" = 1 ]; then
     printf '\n'
   done
 else
-  # Deal panels into columns, each to whichever column is shortest so far, then
-  # stretch the last panel of each column so the columns end level.
-  heights=() colof=() lastof=()
-  for (( c = 0; c < NCOL; c++ )); do heights[$c]=0; lastof[$c]=-1; done
+  # Heights: each column's total, then stretch the last panel of every column
+  # so the columns of a row end level.
+  colh=() lastp=() rowh=() ph=()
   for i in "${!TITLES[@]}"; do
-    n=$(( $(printf '%s' "${BODIES[$i]}" | grep -c '') + 3 ))   # + title + border
-    best=0
-    for (( c = 1; c < NCOL; c++ )); do [ "${heights[$c]}" -lt "${heights[$best]}" ] && best=$c; done
-    colof[$i]=$best; heights[$best]=$(( heights[best] + n )); lastof[$best]=$i
-    ph[$i]=$n
+    lines_of "$i"; ph[$i]=$(( LN + 3 ))     # + title + top and bottom border
+    k=$(( PROW[i] * 10 + PCOL[i] ))
+    colh[$k]=$(( ${colh[$k]:-0} + ph[i] )); lastp[$k]=$i
+    [ "${colh[$k]}" -gt "${rowh[${PROW[$i]}]:-0}" ] && rowh[${PROW[$i]}]=${colh[$k]}
   done
-  tallest=0
-  for (( c = 0; c < NCOL; c++ )); do [ "${heights[$c]}" -gt "$tallest" ] && tallest=${heights[$c]}; done
 
   # Each gum call is a ~20 ms process start, so draw the boxes in parallel.
   tmp=$(mktemp -d "${TMPDIR:-/tmp}/hello.XXXXXX")
   for i in "${!TITLES[@]}"; do
-    c=${colof[$i]}; h=${ph[$i]}
-    [ "${lastof[$c]}" = "$i" ] && h=$(( h + tallest - heights[c] ))
+    k=$(( PROW[i] * 10 + PCOL[i] )); h=${ph[$i]}
+    [ "${lastp[$k]}" = "$i" ] && h=$(( h + rowh[PROW[i]] - colh[k] ))
     gum style --border rounded --border-foreground 240 --padding "0 1" \
-      --width "$CW" --height "$h" \
+      --width "${PW[$i]}" --height "$h" \
       "${C_B}${C_HDR}${TITLES[$i]}${C_OFF}"$'\n'"${BODIES[$i]%$'\n'}" > "$tmp/$i" &
   done
   wait
-  colstr=()
-  for i in "${!TITLES[@]}"; do
-    c=${colof[$i]}
-    colstr[$c]="${colstr[$c]:+${colstr[$c]}$'\n'}$(cat "$tmp/$i")"
+
+  for (( r = 0; r < NROWS; r++ )); do
+    colstr=() args=()
+    for i in "${!TITLES[@]}"; do
+      [ "${PROW[$i]}" = "$r" ] || continue
+      c=${PCOL[$i]}
+      colstr[$c]="${colstr[$c]:+${colstr[$c]}$'\n'}$(cat "$tmp/$i")"
+    done
+    [ "${#colstr[@]}" -gt 0 ] || continue
+    for (( c = 0; c < ROWCOLS[r]; c++ )); do
+      [ -n "${colstr[$c]:-}" ] || continue
+      [ "${#args[@]}" -gt 0 ] && args[${#args[@]}]=" "
+      args[${#args[@]}]="${colstr[$c]}"
+    done
+    if [ "${#args[@]}" -eq 1 ]; then printf '%s\n' "${args[0]}"
+    else gum join --horizontal --align top "${args[@]}"; fi | sed "s/^/$(printf '%*s' "$MARGIN" '')/"
   done
   rm -rf "$tmp"
-
-  args=()
-  for (( c = 0; c < NCOL; c++ )); do
-    args[${#args[@]}]="${colstr[$c]}"
-    [ "$c" -lt $(( NCOL - 1 )) ] && args[${#args[@]}]=" "
-  done
-  gum join --horizontal --align top "${args[@]}" | sed "s/^/$(printf '%*s' "$MARGIN" '')/"
   printf '\n'
 fi
 
