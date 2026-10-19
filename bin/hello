@@ -130,7 +130,7 @@ row() { # row <command> <description>
 }
 
 note() { while IFS= read -r l; do add "$l"; done < <(wrap "$IW" 0 "$1"); }
-sub()  { add ""; add "${C_DIM}$1${C_OFF}"; }
+sub()  { add ""; note "${C_DIM}$1${C_OFF}"; }
 
 # metric <dot-colour> <label> <value> — one line of the machine panel.
 metric() { add "$1●${C_OFF} $(printf '%-9s' "$2")$3"; }
@@ -230,15 +230,26 @@ machine_panel() {
   add ""
   # macOS: once a day. Lines like "Title: macOS Tahoe 26.7.1, Version: ...".
   updates=$(cached softwareupdate 86400 "softwareupdate -l 2>&1 | sed -n 's/^.*Title: \([^,]*\),.*/\1/p'")
+  # A major upgrade (macOS 27 while this is 26) is listed but not counted as
+  # waiting -- the same rule update-watch follows -- or it would stay orange
+  # for as long as the machine stays on the old major version.
+  local waiting="" major="" v
+  while IFS= read -r l; do
+    [ -n "$l" ] || continue
+    v=$(printf '%s' "$l" | sed -n 's/^macOS.* \([0-9][0-9]*\)\.[0-9.]*$/\1/p')
+    if [ -n "$v" ] && [ "$v" -gt "${os%%.*}" ]; then major="$l"
+    else waiting="$waiting$l"$'\n'; fi
+  done <<< "$updates"
   if [ -z "$updates" ] && [ ! -f "$CACHE_DIR/softwareupdate" ]; then
     metric "${C_DIM}" "macOS" "${C_DIM}checking for updates…${C_OFF}"
-  elif [ -z "$updates" ]; then
+  elif [ -z "$waiting" ]; then
     metric "${C_OK}" "macOS" "up to date"
   else
-    n=$(printf '%s\n' "$updates" | grep -c .)
-    metric "${C_WARN}" "macOS" "$n update$([ "$n" -gt 1 ] && echo s) available"
-    while IFS= read -r l; do add "           ${C_DIM}$l${C_OFF}"; done < <(printf '%s\n' "$updates" | head -4)
+    n=$(printf '%s' "$waiting" | grep -c .)
+    metric "${C_WARN}" "macOS" "$n update$([ "$n" -gt 1 ] && echo s) waiting"
+    while IFS= read -r l; do [ -n "$l" ] && add "           ${C_DIM}$l${C_OFF}"; done <<< "$waiting"
   fi
+  [ -n "$major" ] && add "           ${C_DIM}$major — major upgrade, when you choose${C_OFF}"
 
   # Homebrew: every six hours, without letting it update itself first.
   brew=$(cached brew-outdated 21600 "HOMEBREW_NO_AUTO_UPDATE=1 brew outdated --quiet | wc -l | tr -d ' '")
@@ -313,26 +324,38 @@ servers_panel() {
 
 # ----------------------------------------------------------- the reference ---
 
+# The same commands are `proj` on the Mini and `pm` from the MacBook, so the
+# panels are written once with $P standing for whichever applies here.
+if [ "$IS_MINI" = 1 ]; then P=proj; else P=pm; fi
+
 commands_panel() {
-  if [ "$IS_MINI" = 1 ]; then
-    panel "RESIDENT PROJECTS"
-    row "proj"                "fuzzy-pick a project and open its session"
-    row "proj <name> claude"  "serve it to the Claude app (sessions start there)"
-    row "proj <name> codex"   "Codex in a terminal (always starts fresh)"
-    row "proj -l"             "what exists, ${C_KEY}*${C_OFF} marks a live session"
-    row "proj -k <name>"      "stop it (exact name) — resident ones come back"
-    row "proj login"          "renew the claude.ai login (~monthly)"
-  else
-    panel "LIVES ON THE MINI — reachable from the Claude app"
-    row "pm <name> claude"    "serve it to the Claude app (sessions start there)"
-    row "pm"                  "fuzzy-pick instead of naming it"
-    row "pm -l"               "what exists, ${C_KEY}*${C_OFF} marks a live session"
-    row "pm -k <name>"        "stop it (exact name) — resident ones come back"
-    row "pm -s"               "plain shell on the Mini, no tmux"
-    row "pm login"            "renew the Mini's claude.ai login (~monthly)"
+  if [ "$IS_MINI" = 1 ]; then panel "SERVING PROJECTS" 19
+  else panel "LIVES ON THE MINI — reached from the Claude app" 19; fi
+  row "$P <name> claude"  "serve it to the Claude app; a new folder asks once to be trusted"
+  row "$P"                "pick a project, open a shell"
+  row "$P -l"             "projects, sessions, servers"
+  row "$P -k <name>"      "stop it — residents return in 30 min"
+  row "$P -R"             "restart every server"
+  row "$P login"          "renew claude.ai login (~monthly)"
+  row "$P <name> codex"   "Codex in a terminal"
+  [ "$IS_MINI" = 1 ] || row "pm -s" "plain shell on the Mini"
+  add ""
+  note "${C_DIM}Residents are always up: ${C_OFF}${C_KEY}~/.config/proj/resident${C_OFF}${C_DIM}. A folder outside ~/Projects carries its path and needs the exact name.${C_OFF}"
+  note "${C_DIM}The app lists servers by GitHub repo name — orra.org is orra-bedrock-site. “Select repository…” there means nothing serves it.${C_OFF}"
+  if [ "$IS_MINI" != 1 ]; then
     sub "HERE, NOW — ends with this terminal"
-    row "lpd"                 "launchpad TUI — descriptions, last opened"
+    row "lpd" "launchpad TUI — descriptions, last opened"
   fi
+}
+
+autopilot_panel() {
+  panel "ON AUTOPILOT — the Mini, via Telegram" 18
+  row "minijob add <id>"  "queue a run for later or on a schedule"
+  row "minijob list"      "every job, last and next run"
+  row "minijob show <id>" "the job and its latest report"
+  note "${C_DIM}In ${ROOT/#$HOME/~}/mini-jobs/bin, not on PATH. Its AGENTS.md first.${C_OFF}"
+  add ""
+  note "Telegram also hears from ${C_KEY}power-watch${C_OFF} (wall power, the UPS) and ${C_KEY}update-watch${C_OFF} (macOS updates waiting)."
 }
 
 tmux_panel() {
@@ -347,6 +370,7 @@ sync_panel() {
   panel "STAYING IN SYNC" 14
   note "${C_WARN}GitHub is the source of truth, not Dropbox.${C_OFF}"
   note "Commit and push before switching machines — nothing warns you."
+  note "The Projects root is a repo too: pull before editing ${C_KEY}BACKLOG.md${C_OFF}, push when done."
   if [ "$IS_MINI" = 1 ]; then
     # sync-secrets pushes from the MacBook to here; running it on the Mini
     # would mean syncing the machine to itself.
@@ -360,9 +384,8 @@ sync_panel() {
 remember_panel() {
   [ "$IS_MINI" = 1 ] && return
   panel "WORTH REMEMBERING"
-  note "A live agent costs ~1.2 GB; the Mini has 16 GB."
-  note "Resident projects restart within 30 min of ${C_KEY}pm -k${C_OFF} unless taken off ${C_KEY}~/.config/proj/resident${C_OFF} on the Mini."
-  note "Let Claude exit when done — ${C_KEY}claude -c${C_OFF} resumes it from disk for free."
+  note "An idle server is ~150 MB; a live interactive session ~1.2 GB, of the Mini's 16 GB."
+  note "Let sessions end — conversations resume from disk."
 }
 
 # -------------------------------------------------------------- the layout ---
@@ -381,19 +404,20 @@ FULL=$(( COLS - MARGIN * 2 ))
 
 # Rows of columns of panels: rows one per line, columns split by "|", panels
 # stacked in a column split by ",". M machine, S servers, Y sync, C commands,
-# T tmux, R worth remembering (MacBook only).
+# A autopilot (mini-jobs, watchers), T tmux, R worth remembering (MacBook only).
 if [ "$PLAIN" = 1 ] || [ "$COLS" -lt 100 ]; then
-  LAYOUT=$'M\nS\nC\nT\nY\nR'
+  LAYOUT=$'M\nS\nC\nA\nT\nY\nR'
 elif [ "$COLS" -lt 140 ]; then
-  LAYOUT=$'M|S\nC|Y,T,R'
+  LAYOUT=$'M|S\nC|Y,A,T,R'
 else
-  LAYOUT=$'M|S\nY,R|C|T'
+  LAYOUT=$'M|S\nY,R|C|A,T'
 fi
 
 build() { # build <letter> — run that panel's builder at the current IW
   case "$1" in
     M) machine_panel ;;  S) servers_panel ;;  C) commands_panel ;;
     T) tmux_panel ;;     Y) sync_panel ;;     R) remember_panel ;;
+    A) autopilot_panel ;;
   esac
 }
 
