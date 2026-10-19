@@ -311,9 +311,44 @@ rc_url() { # rc_url <name>
     # A server that failed to start is gone within a second or two; don't wait
     # out the full twenty for it.
     [ "$i" -gt 6 ] && ! rc_running "$1" && return 1
+    trust_pane "$1" >/dev/null && return 2
     sleep 0.5
   done
   return 1
+}
+
+# A directory Claude Code has never opened gets "Trust <dir>? [y/N]" before
+# the server registers. Nobody is attached to see it, so the server sits there
+# alive and unregistered -- including when the LaunchAgent started it. Prints
+# the pane holding the question, if any.
+trust_pane() { # trust_pane <name>
+  local p
+  for p in $(tmux list-panes -s -t "=$(sess_name "$1")" -F '#{pane_id}' 2>/dev/null); do
+    tmux capture-pane -p -J -t "$p" 2>/dev/null | grep -v '^[[:space:]]*$' | tail -1 \
+      | grep -q '^Trust .*? \[y/N\]' && { printf '%s' "$p"; return 0; }
+  done
+  return 1
+}
+
+# Put that question to whoever ran proj, and pass their answer on. It has to be
+# a person: Claude Code discards an answer that arrives too quickly after the
+# question ("arrived too quickly ... to count"), so proj cannot answer it on its
+# own, and should not try. `pm` runs ssh with -t, so this works from the
+# MacBook too. Without a terminal it says what to run instead.
+ask_trust() { # ask_trust <name> <dir>
+  local pane ans
+  pane=$(trust_pane "$1") || return 0
+  if [ ! -t 0 ] || [ ! -t 1 ]; then
+    printf "  '%s' is waiting to be trusted. Run: pm %s claude\n" "$1" "$1" >&2
+    return 1
+  fi
+  printf '  First Remote Control start in %s.\n' "$2"
+  printf '  Sessions there can read, edit and run files, and its .claude settings apply.\n'
+  read -r -p "  Trust it? [y/N] " ans
+  case "$ans" in
+    [yY]*) tmux send-keys -t "$pane" y Enter ;;
+    *)     printf "  Not trusted; the server is still waiting. Answer later with: pm %s claude\n" "$1"; return 1 ;;
+  esac
 }
 
 # Resolve a possibly-partial name to a real project directory.
@@ -373,6 +408,7 @@ restart_all() {
 rc_mark() { # rc_mark <name>
   rc_running "$1" || return 0
   if rc_auth_failed "$1"; then printf 'remote control (auth failed)'
+  elif trust_pane "$1" >/dev/null; then printf 'remote control (waiting to be trusted)'
   else                         printf 'remote control'; fi
 }
 
@@ -450,7 +486,9 @@ SESS=$(sess_name "$NAME")
 if [ "$AGENT" = claude ] && [ -z "${PROJ_NO_REMOTE_CONTROL:-}" ]; then
   [ "$FRESH" = new ] && echo "proj: 'new' has no meaning for a Remote Control server — the app creates the sessions." >&2
   logged_in || { login_help; exit 1; }
-  if rc_running "$NAME" && ! rc_auth_failed "$NAME"; then
+  if rc_running "$NAME" && trust_pane "$NAME" >/dev/null; then
+    printf "'%s' is running but has not been trusted yet.\n" "$NAME"
+  elif rc_running "$NAME" && ! rc_auth_failed "$NAME"; then
     printf "'%s' is already reachable from the Claude app.\n" "$NAME"
   else
     # Running but locked out since a login lapsed: replace it, don't adopt it.
@@ -460,7 +498,12 @@ if [ "$AGENT" = claude ] && [ -z "${PROJ_NO_REMOTE_CONTROL:-}" ]; then
     start_rc "$NAME" "$DIR" "$SESS" || exit 1
     printf "Started Remote Control for '%s'.\n" "$NAME"
   fi
-  if url=$(rc_url "$NAME"); then
+  url=$(rc_url "$NAME"); rc=$?
+  if [ "$rc" -eq 2 ] || trust_pane "$NAME" >/dev/null; then
+    ask_trust "$NAME" "$DIR" || exit 1
+    url=$(rc_url "$NAME"); rc=$?
+  fi
+  if [ "$rc" -eq 0 ]; then
     printf '  %s\n' "$url"
   elif ! rc_running "$NAME"; then
     printf '  The server exited — see %s, or the pane: tmux attach -t %s\n' "$(rc_log "$NAME")" "$SESS" >&2
