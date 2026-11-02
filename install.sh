@@ -119,8 +119,13 @@ EXCLUDES=(
 # `git pull` updates the installed command with no second step. And $HOME/bin
 # already holds things this repo does not manage (hey, sshconn, subl) -- those
 # must survive untouched, which replacing the directory would not allow.
+#
+# .claude holds only CLAUDE.md, Claude Code's global instructions. It is linked,
+# not copied, because agents edit it in place: a copy would drift on every edit,
+# while a link sends the edit into this repo, where git shows it.
 LINK_INTO=(
   "bin"
+  ".claude"
 )
 
 is_link_into() {
