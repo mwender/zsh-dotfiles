@@ -94,6 +94,12 @@ When a local WordPress copy has the database but not the media library, don't ha
 
 **How to apply:** suggest it whenever a local copy shows broken images after a DB sync. There's no non-interactive CLI subcommand for it, so ask Michael to press the keys, or drive the TUI with the pilotty skill if he'd like that. Make sure the plugin file is gitignored in the site repo (a `mu-plugins/*/` rule only ignores folders, not single files).
 
+## DNS checks: the office network intercepts port 53, so use DNS over HTTPS
+
+On the office network (gateway `192.168.4.1`), every plain DNS query is intercepted and answered from a cache, whatever server you name. `dig @192.0.2.1`, an address with no server, still gets an answer, and `dig @<authoritative nameserver>` can return a stale record whose TTL counts down. The answering resolvers are AWS addresses, so the cause is most likely the router's DNS filtering (an eero, judging by the 192.168.4.x range, with eero Plus/Secure) and not the ISP. It applies to both machines while they're on that network, and not to the MacBook elsewhere. Found 2026-11-09 during the wenmarkdigital.com move from Route 53 to Cloudflare, where it made a proxied record look DNS-only.
+
+**How to apply:** for propagation checks, or to see what an authoritative server is serving right now, query over HTTPS instead of `dig`: `curl -s -H 'accept: application/dns-json' 'https://cloudflare-dns.com/dns-query?name=<host>&type=<T>'`, or `https://dns.google/resolve?name=<host>&type=<T>`, whose `Comment` field names the authoritative server it asked. Treat a plain `dig` answer as possibly cached.
+
 ## Billing rate
 
 Michael's hourly rate is **$125/hr** (confirmed 2026-11-02). Use it when estimating or quoting client work, and show quotes as hours × $125 unless he gives a fixed price.
