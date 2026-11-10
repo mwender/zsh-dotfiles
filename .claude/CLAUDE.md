@@ -94,6 +94,12 @@ When a local WordPress copy has the database but not the media library, don't ha
 
 **How to apply:** suggest it whenever a local copy shows broken images after a DB sync. There's no non-interactive CLI subcommand for it, so ask Michael to press the keys, or drive the TUI with the pilotty skill if he'd like that. Make sure the plugin file is gitignored in the site repo (a `mu-plugins/*/` rule only ignores folders, not single files).
 
+## Bedrock sites: WPackagist is legacy, so offer the move to WP Packages
+
+Michael's Bedrock sites get WordPress.org plugins and themes from **WP Packages** (`https://repo.wp-packages.org`, run by Roots, packages named `wp-plugin/<slug>` and `wp-theme/<slug>`). **WPackagist** (`https://wpackagist.org`, `wpackagist-plugin/<slug>`) is legacy. Older sites still use it, including caseantiques.com, orra.org and pickupmydonation.com on the Mac Mini as of 2026-11-10, and projects moved over from the MacBook probably do too.
+
+**How to apply:** whenever you work in a Bedrock site whose `composer.json` mentions `wpackagist`, tell Michael it's on the legacy source and offer to move it. Don't do it unasked, and keep it out of unrelated changes: it gets its own branch and commit. The procedure is in the `wp-to-bedrock` skill's SKILL.md, under "Legacy: sites still on WPackagist". It runs `~/.claude/skills/wp-to-bedrock/scripts/wpackagist-to-wp-packages.sh --dry-run`, then the real run, and keeps every plugin at its locked version so the switch upgrades nothing. Plugins that WP Packages can't serve at their version (untagged releases, trunk-only, closed) need Michael's call per plugin. Never add WPackagist to a new site. On the MacBook, `git pull` in `~/.claude/skills/wp-to-bedrock` first.
+
 ## DNS checks: the office network intercepts port 53, so use DNS over HTTPS
 
 On the office network (gateway `192.168.4.1`), every plain DNS query is intercepted and answered from a cache, whatever server you name. `dig @192.0.2.1`, an address with no server, still gets an answer, and `dig @<authoritative nameserver>` can return a stale record whose TTL counts down. The answering resolvers are AWS addresses, so the cause is most likely the router's DNS filtering (an eero, judging by the 192.168.4.x range, with eero Plus/Secure) and not the ISP. It applies to both machines while they're on that network, and not to the MacBook elsewhere. Found 2026-11-09 during the wenmarkdigital.com move from Route 53 to Cloudflare, where it made a proxied record look DNS-only.
