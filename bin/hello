@@ -184,6 +184,13 @@ machine_panel() {
 
   # Disk: the Data volume is where everything lives on APFS.
   read -r dkb used avail <<< "$(df -k /System/Volumes/Data 2>/dev/null | awk 'NR==2 { print $2, $3, $4 }')"
+  # df leaves out purgeable space (mostly local Time Machine snapshots, which
+  # macOS deletes on demand), so it can report 16 GB free on a disk with 80.
+  # Ask macOS for what it would actually give a write, as Finder shows it
+  # (~0.15s); fall back to df's figure if that fails.
+  local important
+  important=$(osascript -l JavaScript -e 'ObjC.import("Foundation"); var k = "NSURLVolumeAvailableCapacityForImportantUsageKey"; Math.floor($.NSURL.fileURLWithPath("/System/Volumes/Data").resourceValuesForKeysError($([k]), null).objectForKey(k).js / 1024)' 2>/dev/null)
+  case "$important" in ''|*[!0-9]*) ;; *) [ "$important" -gt "${avail:-0}" ] && avail=$important ;; esac
   if [ -n "${dkb:-}" ]; then
     pct=$(( (dkb - avail) * 100 / dkb ))
     col=$(level "$pct" 80 90)
