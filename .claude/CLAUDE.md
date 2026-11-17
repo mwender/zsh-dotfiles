@@ -116,4 +116,4 @@ Michael's hourly rate is **$125/hr** (confirmed 2026-11-02). Use it when estimat
 
 ## Company name
 
-Michael's company is **Wenmark Digital Solutions LLC**. Use the full name with "LLC" on contracts, invoices and anything legal or formal; "Wenmark Digital Solutions" is fine everywhere else, such as quote headers, proposals and emails. Spell it "Wenmark", with a lowercase m: never "WenMark", even though the domain `wenmarkdigital.com` might suggest camel case. Don't shorten it to "Wenmark Digital" unless Michael does. (A quote on 2026-11-12 went out in draft as "WenMark Digital" because the name wasn't written down here.)
+Michael's company is **Wenmark Digital Solutions LLC**. Use the full name with "LLC" on contracts, invoices and anything legal or formal; "Wenmark Digital Solutions" is fine everywhere else, such as quote headers, proposals and emails. Spell it "Wenmark", with a lowercase m: never "WenMark", even though the domain `wenmarkdigital.com` might suggest camel case. Don't shorten it to "Wenmark Digital" unless Michael does. (The 2026-11-12 Jupiter Entertainment quote draft first said "WenMark Digital" because the name wasn't written down here.)
