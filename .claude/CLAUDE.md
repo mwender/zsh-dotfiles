@@ -113,3 +113,7 @@ On the office network (gateway `192.168.4.1`), every plain DNS query is intercep
 ## Billing rate
 
 Michael's hourly rate is **$125/hr** (confirmed 2026-11-02). Use it when estimating or quoting client work, and show quotes as hours × $125 unless he gives a fixed price.
+
+## Company name
+
+Michael's company is **Wenmark Digital Solutions LLC**. Use the full name with "LLC" on contracts, invoices and anything legal or formal; "Wenmark Digital Solutions" is fine everywhere else, such as quote headers, proposals and emails. Spell it "Wenmark", with a lowercase m: never "WenMark", even though the domain `wenmarkdigital.com` might suggest camel case. Don't shorten it to "Wenmark Digital" unless Michael does. (A quote on 2026-11-12 went out in draft as "WenMark Digital" because the name wasn't written down here.)
