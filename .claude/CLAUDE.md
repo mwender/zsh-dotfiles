@@ -14,6 +14,18 @@ When authoring or editing any prose document — Markdown, reports, notes, docs,
 - This applies to editing existing files too — if a paragraph is already hard-wrapped and being rewritten, unwrap it rather than preserving the wrapping.
 - **Exceptions, where wrapping is conventional and the text isn't copy-pasted as prose:** git commit messages (72-column convention) and code comments.
 
+## Project docs record decisions, not machine state
+
+`AGENTS.md`, `CLAUDE.md` and memory files hold what stays true until someone decides otherwise: decisions and the reasons for them, conventions, where things live, and how to do things. They don't hold state that changes without anyone deciding to change it: whether a CLI is logged in, whether a process or tmux session is running, card positions on a board, "verified working on <date>".
+
+**Why:** a snapshot goes stale silently and then reads like a current fact. hoperedefined.org's `AGENTS.md` said for three months that `gh` on the Mac Mini was "not authenticated (HTTP 401)". A session repeated it to Michael as true on 2026-11-20 without running anything, when `gh` had been logged in all along. Checking takes one command; a wrong note costs a wrong decision.
+
+**How to apply:**
+- Before stating a machine or tool's state, check it live (`gh auth status`, `tmux ls`, `curl` the URL), even if a doc already says what it is.
+- When documenting something volatile, write how to check it instead of what it was: "`tmux ls` shows whether `hoperedefined-web` is up", not "running as of 2026-11-20".
+- When you find a stale snapshot in a doc, delete it or swap it for the check. Don't just update the date.
+- Dated history (call logs, "decided 2026-11-11", why something changed) is fine. It describes the past and says so.
+
 ## Basecamp CLI — general principles
 
 Learned across sessions using the `basecamp` skill/CLI. These apply to any Basecamp project, not just one client.
