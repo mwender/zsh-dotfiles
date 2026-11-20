@@ -28,7 +28,7 @@
 # brought up together by `proj -r`, which a LaunchAgent runs at login. A line
 # may add a path, for a project that lives outside the projects directory:
 #
-#   hoperedefined.org   ~/webdev/bedrock/hoperedefined.org
+#   hoperedefined.org   ~/webdev/astro/hoperedefined.org
 #
 # The name is the server's identity -- what `proj -r` looks for to decide
 # whether it is already up. It is not what the Claude app lists: the app's
